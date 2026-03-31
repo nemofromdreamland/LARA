@@ -1,4 +1,4 @@
-# LARA — Leaflet Assistant RAG Application
+# ![LARA mascot](frontend/public/mascot.png) LARA — Leaflet Assistant RAG Application
 
 Upload a prescription PDF and ask questions about your medications — answers grounded in official FDA drug leaflets from DailyMed (NLM).
 
