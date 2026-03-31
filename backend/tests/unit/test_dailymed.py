@@ -23,7 +23,10 @@ MOCK_SPL_RESPONSE = {
     "data": {
         "setid": "test-set-id-123",
         "sections": [
-            {"loinc_code": "34067-9", "text": "Lisinopril is indicated for hypertension."},
+            {
+                "loinc_code": "34067-9",
+                "text": "Lisinopril is indicated for hypertension.",
+            },
             {"loinc_code": "34068-7", "text": "Take 10mg once daily."},
             {"loinc_code": "34071-1", "text": "Do not use in pregnancy."},
             # Unknown LOINC code — should be ignored
@@ -76,7 +79,6 @@ def test_parse_sections_ignores_unknown_loinc():
     raw = MOCK_SPL_RESPONSE["data"]["sections"]
     sections = _parse_sections(raw, "lisinopril")
     # The unknown code "99999-9" must not appear
-    section_names = {s.section for s in sections}
     assert len(sections) == 3  # 3 valid non-empty sections
 
 
@@ -104,9 +106,7 @@ async def test_fetch_leaflet_sections_end_to_end():
     respx.get(SEARCH_URL).mock(
         return_value=httpx.Response(200, json=MOCK_SEARCH_RESPONSE)
     )
-    respx.get(SPL_URL).mock(
-        return_value=httpx.Response(200, json=MOCK_SPL_RESPONSE)
-    )
+    respx.get(SPL_URL).mock(return_value=httpx.Response(200, json=MOCK_SPL_RESPONSE))
     sections = await fetch_leaflet_sections("lisinopril")
     assert len(sections) == 3
     assert all(isinstance(s, LeafletSection) for s in sections)

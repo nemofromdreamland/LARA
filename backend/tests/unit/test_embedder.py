@@ -1,5 +1,3 @@
-import pytest
-
 from app.services.embedder import embed
 
 _EMBEDDING_DIM = 384
@@ -47,9 +45,11 @@ def test_embed_similar_texts_are_closer():
     def cosine_sim(u: list[float], v: list[float]) -> float:
         return dot(u, v) / (norm(u) * norm(v))
 
-    a, b, c = embed([
-        "Take this medication with food.",
-        "This drug should be taken with meals.",
-        "The stock market crashed yesterday.",
-    ])
+    a, b, c = embed(
+        [
+            "Take this medication with food.",
+            "This drug should be taken with meals.",
+            "The stock market crashed yesterday.",
+        ]
+    )
     assert cosine_sim(a, b) > cosine_sim(a, c)

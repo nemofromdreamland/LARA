@@ -1,6 +1,5 @@
 from unittest.mock import AsyncMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.models.schemas import ChatResponse, Source
@@ -65,7 +64,9 @@ def test_chat_missing_fields_returns_422(client: TestClient):
 @patch("app.services.rag_pipeline.retrieve")
 @patch("app.services.rag_pipeline.embed")
 @patch("app.services.rag_pipeline.generate", new_callable=AsyncMock)
-def test_rag_pipeline_integration(mock_generate, mock_embed, mock_retrieve, client: TestClient):
+def test_rag_pipeline_integration(
+    mock_generate, mock_embed, mock_retrieve, client: TestClient
+):
     """Test the full pipeline: embed → retrieve → generate → response."""
     mock_embed.return_value = [[0.1] * 384]
     mock_retrieve.return_value = [
@@ -75,7 +76,10 @@ def test_rag_pipeline_integration(mock_generate, mock_embed, mock_retrieve, clie
 
     response = client.post(
         "/chat",
-        json={"session_id": "sess-pipeline", "question": "How often should I take lisinopril?"},
+        json={
+            "session_id": "sess-pipeline",
+            "question": "How often should I take lisinopril?",
+        },
     )
     assert response.status_code == 200
     data = response.json()
@@ -85,12 +89,16 @@ def test_rag_pipeline_integration(mock_generate, mock_embed, mock_retrieve, clie
 
 @patch("app.services.rag_pipeline.retrieve")
 @patch("app.services.rag_pipeline.embed")
-async def test_rag_pipeline_no_chunks_skips_llm(mock_embed, mock_retrieve, client: TestClient):
+async def test_rag_pipeline_no_chunks_skips_llm(
+    mock_embed, mock_retrieve, client: TestClient
+):
     """When retrieve returns nothing, LLM must not be called."""
     mock_embed.return_value = [[0.1] * 384]
     mock_retrieve.return_value = []
 
-    with patch("app.services.rag_pipeline.generate", new_callable=AsyncMock) as mock_gen:
+    with patch(
+        "app.services.rag_pipeline.generate", new_callable=AsyncMock
+    ) as mock_gen:
         response = client.post(
             "/chat",
             json={"session_id": "empty-sess-2", "question": "Any question"},

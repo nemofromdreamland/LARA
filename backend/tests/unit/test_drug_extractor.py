@@ -67,3 +67,35 @@ def test_mixed_rx_and_suffix():
 )
 def test_parametrized_rx_line(drug: str, text: str):
     assert drug in extract_drug_names(text)
+
+
+_SAMPLE_NUMBERED = """
+1. Acetaminophen
+ • Dosage: 500mg
+ • Frequency: Every 6 hours as needed
+2. Tylenol
+ • Dosage: 500mg
+ • Frequency: Twice daily
+"""
+
+
+def test_numbered_list_extracts_acetaminophen():
+    names = extract_drug_names(_SAMPLE_NUMBERED)
+    assert "acetaminophen" in names
+
+
+def test_numbered_list_extracts_tylenol():
+    names = extract_drug_names(_SAMPLE_NUMBERED)
+    assert "tylenol" in names
+
+
+def test_numbered_list_no_duplicates():
+    names = extract_drug_names(_SAMPLE_NUMBERED)
+    assert names.count("acetaminophen") == 1
+    assert names.count("tylenol") == 1
+
+
+def test_suffix_extracts_acetaminophen_via_phen():
+    # "nophen" suffix catches Acetaminophen even without numbered list context
+    names = extract_drug_names("The patient takes Acetaminophen for pain relief.")
+    assert "acetaminophen" in names

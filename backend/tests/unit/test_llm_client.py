@@ -1,7 +1,5 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from app.services.llm_client import SYSTEM_PROMPT, _build_prompt, generate
 
 

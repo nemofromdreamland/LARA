@@ -3,7 +3,6 @@ from unittest.mock import AsyncMock, patch
 
 import fitz
 import pytest
-from fastapi.testclient import TestClient
 
 from app.services.dailymed import LeafletSection
 
@@ -57,7 +56,9 @@ def test_upload_success(mock_store, mock_embed, mock_fetch, client, pdf_with_dru
 @patch("app.routes.upload.fetch_leaflet_sections", new_callable=AsyncMock)
 @patch("app.routes.upload.embed")
 @patch("app.routes.upload.store")
-def test_upload_unknown_drug_returns_no_leaflets(mock_store, mock_embed, mock_fetch, client):
+def test_upload_unknown_drug_returns_no_leaflets(
+    mock_store, mock_embed, mock_fetch, client
+):
     mock_fetch.return_value = []  # DailyMed found nothing
     pdf = _make_pdf("Lisinopril 10mg once daily")
 
