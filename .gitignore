@@ -21,3 +21,6 @@ chroma_data/
 Thumbs.db
 
 # Dockerfiles and docker-compose.yml are NOT ignored
+frontend/dist/
+frontend/node_modules/
+frontend/*.tsbuildinfo

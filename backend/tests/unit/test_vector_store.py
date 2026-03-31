@@ -17,7 +17,9 @@ def _make_embedding(value: float, dim: int = 384) -> list[float]:
 def test_store_and_retrieve_basic(chroma_client):
     chunks = ["Lisinopril is used for hypertension."]
     embeddings = [_make_embedding(0.1)]
-    metadatas = [{"session_id": "sess-1", "drug_name": "lisinopril", "section": "indications"}]
+    metadatas = [
+        {"session_id": "sess-1", "drug_name": "lisinopril", "section": "indications"}
+    ]
 
     store(chunks, embeddings, metadatas, client=chroma_client)
 
@@ -75,7 +77,9 @@ def test_result_keys(chroma_client):
 
 
 def test_retrieve_empty_session_returns_empty(chroma_client):
-    results = retrieve(_make_embedding(0.1), "nonexistent-session", top_k=5, client=chroma_client)
+    results = retrieve(
+        _make_embedding(0.1), "nonexistent-session", top_k=5, client=chroma_client
+    )
     assert results == []
 
 

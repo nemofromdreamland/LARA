@@ -30,7 +30,9 @@ async def upload(
 
     drug_names = extract_drug_names(text)
     if not drug_names:
-        raise HTTPException(status_code=422, detail="No drug names found in prescription.")
+        raise HTTPException(
+            status_code=422, detail="No drug names found in prescription."
+        )
 
     stored_drugs: list[str] = []
 
