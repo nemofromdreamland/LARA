@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# Frontend
+node_modules/
+dist/
+build/
+
+# Vector DB
+chroma_data/
+*.db
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dockerfiles and docker-compose.yml are NOT ignored
