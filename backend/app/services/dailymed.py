@@ -51,9 +51,7 @@ async def _fetch_set_id(drug_name: str, client: httpx.AsyncClient) -> str | None
     wait=wait_exponential(multiplier=1, min=1, max=8),
     reraise=True,
 )
-async def _fetch_sections_raw(
-    set_id: str, client: httpx.AsyncClient
-) -> list[dict]:
+async def _fetch_sections_raw(set_id: str, client: httpx.AsyncClient) -> list[dict]:
     """Return the raw sections list from a DailyMed SPL document."""
     response = await client.get(f"{DAILYMED_BASE}/spls/{set_id}.json")
     response.raise_for_status()
@@ -83,7 +81,8 @@ async def fetch_leaflet_sections(drug_name: str) -> list[LeafletSection]:
     Returns an empty list (with a warning) if the drug is not found.
     Raises httpx.HTTPError after 3 retries if the API is unavailable.
     """
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    headers = {"Accept": "application/json"}
+    async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
         set_id = await _fetch_set_id(drug_name, client)
         if set_id is None:
             return []
