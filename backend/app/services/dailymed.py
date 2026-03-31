@@ -1,4 +1,5 @@
 import logging
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
 import httpx
@@ -52,10 +53,34 @@ async def _fetch_set_id(drug_name: str, client: httpx.AsyncClient) -> str | None
     reraise=True,
 )
 async def _fetch_sections_raw(set_id: str, client: httpx.AsyncClient) -> list[dict]:
-    """Return the raw sections list from a DailyMed SPL document."""
-    response = await client.get(f"{DAILYMED_BASE}/spls/{set_id}.json")
+    """Return the raw sections list from a DailyMed SPL XML document.
+
+    DailyMed v2 only provides full section content via XML (the JSON API has
+    no sections endpoint). We parse the HL7 v3 XML and return dicts with
+    loinc_code and text keys — the same shape _parse_sections expects.
+    """
+    response = await client.get(f"{DAILYMED_BASE}/spls/{set_id}.xml")
     response.raise_for_status()
-    return response.json().get("data", {}).get("sections", [])
+    return _parse_spl_xml(response.text)
+
+
+_SPL_NS = "urn:hl7-org:v3"
+
+
+def _parse_spl_xml(xml_text: str) -> list[dict]:
+    """Extract sections with LOINC codes from an SPL XML document."""
+    root = ET.fromstring(xml_text)
+    ns = {"h": _SPL_NS}
+    results: list[dict] = []
+    for section in root.findall(".//h:section", ns):
+        code_el = section.find("h:code", ns)
+        if code_el is None:
+            continue
+        loinc_code = code_el.get("code", "")
+        text_el = section.find("h:text", ns)
+        text = " ".join(text_el.itertext()).strip() if text_el is not None else ""
+        results.append({"loinc_code": loinc_code, "text": text})
+    return results
 
 
 def _parse_sections(raw: list[dict], drug_name: str) -> list[LeafletSection]:
@@ -81,8 +106,7 @@ async def fetch_leaflet_sections(drug_name: str) -> list[LeafletSection]:
     Returns an empty list (with a warning) if the drug is not found.
     Raises httpx.HTTPError after 3 retries if the API is unavailable.
     """
-    headers = {"Accept": "application/json"}
-    async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
+    async with httpx.AsyncClient(timeout=15.0) as client:
         set_id = await _fetch_set_id(drug_name, client)
         if set_id is None:
             return []

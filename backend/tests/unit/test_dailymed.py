@@ -6,36 +6,75 @@ from app.services.dailymed import (
     LeafletSection,
     _fetch_set_id,
     _parse_sections,
+    _parse_spl_xml,
     fetch_leaflet_sections,
 )
 
 DAILYMED_BASE = "https://dailymed.nlm.nih.gov/dailymed/services/v2"
 
 SEARCH_URL = f"{DAILYMED_BASE}/spls.json"
-SPL_URL = f"{DAILYMED_BASE}/spls/test-set-id-123.json"
+SPL_URL = f"{DAILYMED_BASE}/spls/test-set-id-123.xml"
 
 MOCK_SEARCH_RESPONSE = {
     "data": [{"setid": "test-set-id-123", "title": "LISINOPRIL tablet"}],
     "metadata": {"total_elements": 1},
 }
 
-MOCK_SPL_RESPONSE = {
-    "data": {
-        "setid": "test-set-id-123",
-        "sections": [
-            {
-                "loinc_code": "34067-9",
-                "text": "Lisinopril is indicated for hypertension.",
-            },
-            {"loinc_code": "34068-7", "text": "Take 10mg once daily."},
-            {"loinc_code": "34071-1", "text": "Do not use in pregnancy."},
-            # Unknown LOINC code — should be ignored
-            {"loinc_code": "99999-9", "text": "Some other section."},
-            # Empty text — should be ignored
-            {"loinc_code": "34070-3", "text": ""},
-        ],
-    }
-}
+# Minimal SPL XML with 3 known sections + 1 unknown code + 1 empty text
+MOCK_SPL_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<document xmlns="urn:hl7-org:v3">
+  <component>
+    <structuredBody>
+      <component>
+        <section>
+          <code code="34067-9" codeSystem="2.16.840.1.113883.6.1"
+                displayName="INDICATIONS &amp; USAGE SECTION"/>
+          <text><paragraph>Lisinopril is indicated for hypertension.</paragraph></text>
+        </section>
+      </component>
+      <component>
+        <section>
+          <code code="34068-7" codeSystem="2.16.840.1.113883.6.1"
+                displayName="DOSAGE &amp; ADMINISTRATION SECTION"/>
+          <text><paragraph>Take 10mg once daily.</paragraph></text>
+        </section>
+      </component>
+      <component>
+        <section>
+          <code code="34071-1" codeSystem="2.16.840.1.113883.6.1"
+                displayName="WARNINGS SECTION"/>
+          <text><paragraph>Do not use in pregnancy.</paragraph></text>
+        </section>
+      </component>
+      <component>
+        <section>
+          <code code="99999-9" codeSystem="2.16.840.1.113883.6.1"
+                displayName="UNKNOWN SECTION"/>
+          <text><paragraph>Some other section.</paragraph></text>
+        </section>
+      </component>
+      <component>
+        <section>
+          <code code="34070-3" codeSystem="2.16.840.1.113883.6.1"
+                displayName="CONTRAINDICATIONS SECTION"/>
+          <text></text>
+        </section>
+      </component>
+    </structuredBody>
+  </component>
+</document>"""
+
+# Raw dicts as returned by _parse_spl_xml — used by _parse_sections tests
+_RAW_SECTIONS = [
+    {"loinc_code": "34067-9", "text": "Lisinopril is indicated for hypertension."},
+    {"loinc_code": "34068-7", "text": "Take 10mg once daily."},
+    {"loinc_code": "34071-1", "text": "Do not use in pregnancy."},
+    {"loinc_code": "99999-9", "text": "Some other section."},
+    {"loinc_code": "34070-3", "text": ""},
+]
+
+
+# ── _fetch_set_id ─────────────────────────────────────────────────────────────
 
 
 @respx.mock
@@ -66,9 +105,41 @@ async def test_fetch_set_id_raises_on_http_error():
             await _fetch_set_id("lisinopril", client)
 
 
+# ── _parse_spl_xml ────────────────────────────────────────────────────────────
+
+
+def test_parse_spl_xml_returns_list_of_dicts():
+    result = _parse_spl_xml(MOCK_SPL_XML)
+    assert isinstance(result, list)
+    assert all(isinstance(r, dict) for r in result)
+
+
+def test_parse_spl_xml_extracts_loinc_codes():
+    result = _parse_spl_xml(MOCK_SPL_XML)
+    codes = [r["loinc_code"] for r in result]
+    assert "34067-9" in codes
+    assert "34068-7" in codes
+    assert "34071-1" in codes
+
+
+def test_parse_spl_xml_extracts_text():
+    result = _parse_spl_xml(MOCK_SPL_XML)
+    indications = next(r for r in result if r["loinc_code"] == "34067-9")
+    assert "hypertension" in indications["text"]
+
+
+def test_parse_spl_xml_dict_has_required_keys():
+    result = _parse_spl_xml(MOCK_SPL_XML)
+    for item in result:
+        assert "loinc_code" in item
+        assert "text" in item
+
+
+# ── _parse_sections ───────────────────────────────────────────────────────────
+
+
 def test_parse_sections_maps_known_loinc_codes():
-    raw = MOCK_SPL_RESPONSE["data"]["sections"]
-    sections = _parse_sections(raw, "lisinopril")
+    sections = _parse_sections(_RAW_SECTIONS, "lisinopril")
     section_names = {s.section for s in sections}
     assert "indications" in section_names
     assert "dosage" in section_names
@@ -76,16 +147,12 @@ def test_parse_sections_maps_known_loinc_codes():
 
 
 def test_parse_sections_ignores_unknown_loinc():
-    raw = MOCK_SPL_RESPONSE["data"]["sections"]
-    sections = _parse_sections(raw, "lisinopril")
-    # The unknown code "99999-9" must not appear
+    sections = _parse_sections(_RAW_SECTIONS, "lisinopril")
     assert len(sections) == 3  # 3 valid non-empty sections
 
 
 def test_parse_sections_ignores_empty_text():
-    raw = MOCK_SPL_RESPONSE["data"]["sections"]
-    sections = _parse_sections(raw, "lisinopril")
-    # contraindications section has empty text — must be excluded
+    sections = _parse_sections(_RAW_SECTIONS, "lisinopril")
     assert all(s.text for s in sections)
 
 
@@ -101,12 +168,15 @@ def test_parse_sections_returns_leaflet_section_dataclass():
     assert isinstance(sections[0], LeafletSection)
 
 
+# ── fetch_leaflet_sections (end-to-end) ───────────────────────────────────────
+
+
 @respx.mock
 async def test_fetch_leaflet_sections_end_to_end():
     respx.get(SEARCH_URL).mock(
         return_value=httpx.Response(200, json=MOCK_SEARCH_RESPONSE)
     )
-    respx.get(SPL_URL).mock(return_value=httpx.Response(200, json=MOCK_SPL_RESPONSE))
+    respx.get(SPL_URL).mock(return_value=httpx.Response(200, text=MOCK_SPL_XML))
     sections = await fetch_leaflet_sections("lisinopril")
     assert len(sections) == 3
     assert all(isinstance(s, LeafletSection) for s in sections)
