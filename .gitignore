@@ -20,6 +20,10 @@ chroma_data/
 .DS_Store
 Thumbs.db
 
+# Claude Code
+SPEC.md
+CLAUDE.md
+
 # Dockerfiles and docker-compose.yml are NOT ignored
 frontend/dist/
 frontend/node_modules/
