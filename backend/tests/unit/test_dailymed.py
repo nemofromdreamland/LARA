@@ -5,6 +5,7 @@ import respx
 from app.services.dailymed import (
     LeafletSection,
     _fetch_set_id,
+    _normalize_drug_name,
     _parse_sections,
     _parse_spl_xml,
     fetch_leaflet_sections,
@@ -189,3 +190,54 @@ async def test_fetch_leaflet_sections_returns_empty_for_unknown_drug():
     )
     sections = await fetch_leaflet_sections("notadrug")
     assert sections == []
+
+
+# ── _normalize_drug_name ──────────────────────────────────────────────────────
+
+
+def test_normalize_strips_mg_dosage():
+    assert _normalize_drug_name("Sertraline 50mg") == "sertraline"
+
+
+def test_normalize_strips_mg_with_space():
+    assert _normalize_drug_name("Lisinopril 10 mg") == "lisinopril"
+
+
+def test_normalize_strips_mcg():
+    assert _normalize_drug_name("Levothyroxine 25 mcg") == "levothyroxine"
+
+
+def test_normalize_no_dosage_still_lowercases():
+    assert _normalize_drug_name("Metformin") == "metformin"
+
+
+def test_normalize_already_lowercase_no_dosage():
+    assert _normalize_drug_name("aspirin") == "aspirin"
+
+
+# ── fetch_leaflet_sections normalization fallback ─────────────────────────────
+
+
+@respx.mock
+async def test_fetch_leaflet_sections_retries_with_normalized_name():
+    """If the original name returns no results, retry with the normalized form."""
+    empty = httpx.Response(200, json={"data": [], "metadata": {}})
+    found = httpx.Response(200, json=MOCK_SEARCH_RESPONSE)
+
+    # First call (original name) → empty; second call (normalized) → found
+    respx.get(SEARCH_URL).mock(side_effect=[empty, found])
+    respx.get(SPL_URL).mock(return_value=httpx.Response(200, text=MOCK_SPL_XML))
+
+    sections = await fetch_leaflet_sections("Sertraline 50mg")
+    assert len(sections) > 0
+
+
+@respx.mock
+async def test_fetch_leaflet_sections_no_retry_when_already_normalized():
+    """If name has no dosage, only one search call is made."""
+    respx.get(SEARCH_URL).mock(
+        return_value=httpx.Response(200, json={"data": [], "metadata": {}})
+    )
+    sections = await fetch_leaflet_sections("notadrug")
+    assert sections == []
+    assert respx.calls.call_count == 1

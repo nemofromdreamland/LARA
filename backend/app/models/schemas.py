@@ -12,6 +12,7 @@ class HealthResponse(BaseModel):
 class UploadResponse(BaseModel):
     session_id: str
     drugs_found: list[str]
+    missing_leaflets: list[str]
     status: str
 
 

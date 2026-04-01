@@ -4,12 +4,13 @@ from unittest.mock import patch
 from app.services.session_store import (
     expire_sessions,
     get_prescription,
+    get_upload_result,
     save_prescription,
+    save_upload_result,
 )
 
 
 def _fresh_state():
-    """Clear module-level _sessions dict between tests."""
     import app.services.session_store as ss
 
     ss._sessions.clear()
@@ -26,11 +27,34 @@ def test_get_prescription_unknown_session():
     assert get_prescription("nonexistent") is None
 
 
+def test_save_and_get_upload_result():
+    _fresh_state()
+    save_prescription("s2", "text")
+    save_upload_result("s2", ["lisinopril"], ["tylenol"])
+    found, missing = get_upload_result("s2")
+    assert found == ["lisinopril"]
+    assert missing == ["tylenol"]
+
+
+def test_get_upload_result_unknown_session():
+    _fresh_state()
+    found, missing = get_upload_result("ghost")
+    assert found == []
+    assert missing == []
+
+
+def test_upload_result_defaults_to_empty_lists():
+    _fresh_state()
+    save_prescription("s3", "text")
+    found, missing = get_upload_result("s3")
+    assert found == []
+    assert missing == []
+
+
 def test_expire_sessions_removes_old_entry():
     _fresh_state()
     save_prescription("old", "text")
 
-    # Patch monotonic so the session appears 3 hours old
     future = time.monotonic() + 10_800
     with patch("app.services.session_store.time.monotonic", return_value=future):
         expired = expire_sessions(ttl_seconds=7200)
@@ -54,8 +78,6 @@ def test_expire_sessions_returns_only_expired():
 
     future = time.monotonic() + 10_800
     with patch("app.services.session_store.time.monotonic", return_value=future):
-        # Only patch monotonic for the expire call; both sessions were created
-        # with the real clock so both look 3h old from the patched perspective.
         expired = expire_sessions(ttl_seconds=7200)
 
     assert set(expired) == {"keep", "evict"}

@@ -50,6 +50,7 @@ def test_upload_success(mock_store, mock_embed, mock_fetch, client, pdf_with_dru
     data = response.json()
     assert data["session_id"] == "test-session-1"
     assert "lisinopril" in data["drugs_found"]
+    assert data["missing_leaflets"] == []
     assert data["status"] == "ok"
 
 
@@ -68,8 +69,10 @@ def test_upload_unknown_drug_returns_no_leaflets(
         files={"file": ("rx.pdf", io.BytesIO(pdf), "application/pdf")},
     )
     assert response.status_code == 200
-    assert response.json()["status"] == "no_leaflets_found"
-    assert response.json()["drugs_found"] == []
+    data = response.json()
+    assert data["status"] == "no_leaflets_found"
+    assert data["drugs_found"] == []
+    assert "lisinopril" in data["missing_leaflets"]
 
 
 def test_upload_rejects_non_pdf(client):

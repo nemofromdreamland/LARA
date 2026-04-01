@@ -1,4 +1,5 @@
 import logging
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
@@ -9,6 +10,21 @@ logger = logging.getLogger(__name__)
 
 DAILYMED_BASE = "https://dailymed.nlm.nih.gov/dailymed/services/v2"
 
+# Matches trailing dosage info: "50 mg", "10mg", "0.5 mcg/ml", etc.
+_DOSAGE_RE = re.compile(r"\s+\d[\d.,]*\s*(?:mg|mcg|ml|g|iu|%|units?)\S*", re.IGNORECASE)
+
+
+def _normalize_drug_name(name: str) -> str:
+    """Strip trailing dosage/strength info and lowercase.
+
+    Examples:
+      "Sertraline 50mg"   → "sertraline"
+      "Lisinopril 10 mg"  → "lisinopril"
+      "Metformin"         → "metformin"
+    """
+    return _DOSAGE_RE.sub("", name).strip().lower()
+
+
 # LOINC code → human-readable section name stored in metadata
 LOINC_SECTIONS: dict[str, str] = {
     "34066-1": "boxed_warnings",
@@ -18,6 +34,13 @@ LOINC_SECTIONS: dict[str, str] = {
     "34073-7": "drug_interactions",
     "34084-4": "adverse_reactions",
     "34071-1": "warnings",
+    "43685-7": "warnings_and_precautions",
+    "42228-7": "pregnancy",
+    "34077-8": "teratogenic_effects",
+    "34078-6": "nonteratogenic_effects",
+    "34080-2": "nursing_mothers",
+    "34081-0": "pediatric_use",
+    "34083-6": "geriatric_use",
 }
 
 
@@ -103,12 +126,27 @@ def _parse_sections(raw: list[dict], drug_name: str) -> list[LeafletSection]:
 async def fetch_leaflet_sections(drug_name: str) -> list[LeafletSection]:
     """Fetch and parse official leaflet sections for *drug_name* from DailyMed.
 
+    If the original name returns no results, retries once with a normalized
+    form (lowercase, dosage info stripped) before giving up.
+
     Returns an empty list (with a warning) if the drug is not found.
     Raises httpx.HTTPError after 3 retries if the API is unavailable.
     """
     async with httpx.AsyncClient(timeout=15.0) as client:
         set_id = await _fetch_set_id(drug_name, client)
+
+        if set_id is None:
+            normalized = _normalize_drug_name(drug_name)
+            if normalized and normalized != drug_name.lower():
+                logger.info(
+                    "DailyMed: retrying %r with normalized name %r",
+                    drug_name,
+                    normalized,
+                )
+                set_id = await _fetch_set_id(normalized, client)
+
         if set_id is None:
             return []
+
         raw = await _fetch_sections_raw(set_id, client)
         return _parse_sections(raw, drug_name)

@@ -8,6 +8,7 @@ from app.services.dailymed import fetch_leaflet_sections
 from app.services.drug_extractor import extract_drug_names
 from app.services.embedder import embed
 from app.services.pdf_parser import extract_text
+from app.services.session_store import save_prescription, save_upload_result
 from app.services.vector_store import store
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,8 @@ async def upload(
     if not text:
         raise HTTPException(status_code=422, detail="Could not extract text from PDF.")
 
+    save_prescription(session_id, text)
+
     drug_names = extract_drug_names(text)
     if not drug_names:
         raise HTTPException(
@@ -35,11 +38,13 @@ async def upload(
         )
 
     stored_drugs: list[str] = []
+    missing_drugs: list[str] = []
 
     for drug in drug_names:
         sections = await fetch_leaflet_sections(drug)
         if not sections:
             logger.warning("No DailyMed leaflet found for drug: %s", drug)
+            missing_drugs.append(drug)
             continue
 
         all_chunks: list[str] = []
@@ -61,8 +66,11 @@ async def upload(
             store(all_chunks, embeddings, all_metas)
             stored_drugs.append(drug)
 
+    save_upload_result(session_id, stored_drugs, missing_drugs)
+
     return UploadResponse(
         session_id=session_id,
         drugs_found=stored_drugs,
+        missing_leaflets=missing_drugs,
         status="ok" if stored_drugs else "no_leaflets_found",
     )
