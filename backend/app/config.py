@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     cerebras_api_key: str = ""
     chroma_path: str = "/data/chroma"
     frontend_origin: str = "http://localhost:5173"
+    session_ttl_seconds: int = 7200  # 2 hours
+    expiry_interval_seconds: int = 600  # run eviction every 10 minutes
 
 
 settings = Settings()

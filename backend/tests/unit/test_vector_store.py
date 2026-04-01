@@ -1,7 +1,7 @@
 import chromadb
 import pytest
 
-from app.services.vector_store import retrieve, store
+from app.services.vector_store import delete_session, retrieve, store
 
 
 @pytest.fixture
@@ -81,6 +81,43 @@ def test_retrieve_empty_session_returns_empty(chroma_client):
         _make_embedding(0.1), "nonexistent-session", top_k=5, client=chroma_client
     )
     assert results == []
+
+
+def test_delete_session_removes_all_docs(chroma_client):
+    meta = {"session_id": "sess-del", "drug_name": "warfarin", "section": "warnings"}
+    store(["Chunk A."], [_make_embedding(0.1)], [meta], client=chroma_client)
+    store(["Chunk B."], [_make_embedding(0.2)], [meta], client=chroma_client)
+
+    deleted = delete_session("sess-del", client=chroma_client)
+    assert deleted == 2
+
+    results = retrieve(_make_embedding(0.1), "sess-del", top_k=5, client=chroma_client)
+    assert results == []
+
+
+def test_delete_session_nonexistent_returns_zero(chroma_client):
+    deleted = delete_session("ghost-session", client=chroma_client)
+    assert deleted == 0
+
+
+def test_delete_session_does_not_affect_other_sessions(chroma_client):
+    store(
+        ["Keep this."],
+        [_make_embedding(0.5)],
+        [{"session_id": "sess-keep", "drug_name": "aspirin", "section": "dosage"}],
+        client=chroma_client,
+    )
+    store(
+        ["Delete this."],
+        [_make_embedding(0.5)],
+        [{"session_id": "sess-gone", "drug_name": "aspirin", "section": "dosage"}],
+        client=chroma_client,
+    )
+
+    delete_session("sess-gone", client=chroma_client)
+
+    kept = retrieve(_make_embedding(0.5), "sess-keep", top_k=5, client=chroma_client)
+    assert len(kept) == 1
 
 
 def test_store_accumulates_across_calls(chroma_client):

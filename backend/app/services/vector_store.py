@@ -46,6 +46,22 @@ def store(
     )
 
 
+def delete_session(
+    session_id: str,
+    client: ClientAPI | None = None,
+) -> int:
+    """Delete all ChromaDB documents belonging to *session_id*.
+
+    Returns the number of documents deleted.
+    """
+    collection = _get_collection(client)
+    existing = collection.get(where={"session_id": session_id})
+    ids = existing["ids"]
+    if ids:
+        collection.delete(ids=ids)
+    return len(ids)
+
+
 def retrieve(
     query_embedding: list[float],
     session_id: str,
