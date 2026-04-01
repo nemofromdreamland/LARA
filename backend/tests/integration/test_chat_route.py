@@ -1,3 +1,5 @@
+import json
+from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
@@ -107,3 +109,62 @@ async def test_rag_pipeline_no_chunks_skips_llm(
 
     assert response.status_code == 200
     assert "not available" in response.json()["answer"]
+
+
+# ---------------------------------------------------------------------------
+# /chat/stream tests
+# ---------------------------------------------------------------------------
+
+
+def _make_stream(*payloads: str):
+    """Return an async generator that yields the given SSE payloads."""
+
+    async def _gen() -> AsyncGenerator[str, None]:
+        for p in payloads:
+            yield p
+
+    return _gen()
+
+
+@patch("app.routes.chat.answer_stream")
+def test_chat_stream_yields_tokens(mock_stream, client: TestClient):
+    sources_payload = "[SOURCES]" + json.dumps({"sources": []})
+    mock_stream.return_value = _make_stream(
+        "Hello ", "world", sources_payload, "[DONE]"
+    )
+
+    with client.stream(
+        "POST",
+        "/chat/stream",
+        json={"session_id": "sess-s", "question": "q"},
+    ) as resp:
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/event-stream")
+        raw = b"".join(resp.iter_bytes()).decode()
+
+    assert "data: Hello " in raw
+    assert "data: world" in raw
+    assert "data: [DONE]" in raw
+
+
+@patch("app.routes.chat.answer_stream")
+def test_chat_stream_includes_sources_event(mock_stream, client: TestClient):
+    sources = [{"drug_name": "lisinopril", "section": "warnings"}]
+    sources_payload = "[SOURCES]" + json.dumps({"sources": sources})
+    mock_stream.return_value = _make_stream("Answer.", sources_payload, "[DONE]")
+
+    with client.stream(
+        "POST",
+        "/chat/stream",
+        json={"session_id": "sess-s2", "question": "q"},
+    ) as resp:
+        raw = b"".join(resp.iter_bytes()).decode()
+
+    assert "[SOURCES]" in raw
+    assert "lisinopril" in raw
+
+
+@patch("app.routes.chat.answer_stream")
+def test_chat_stream_missing_fields_returns_422(mock_stream, client: TestClient):
+    response = client.post("/chat/stream", json={"session_id": "s"})
+    assert response.status_code == 422

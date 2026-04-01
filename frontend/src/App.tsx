@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { askQuestion, createSession, uploadPrescription } from './api'
+import { createSession, streamQuestion, uploadPrescription } from './api'
 import ChatPanel from './components/ChatPanel'
 import Mascot from './components/Mascot'
 import UploadZone from './components/UploadZone'
@@ -56,30 +56,42 @@ export default function App() {
 
   async function handleQuestion(question: string) {
     if (!sessionId || phase === 'asking') return
+
     const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', content: question }
-    setMessages((prev) => [...prev, userMsg])
+    const laraId = `l-${Date.now()}`
+    setMessages((prev) => [
+      ...prev,
+      userMsg,
+      { id: laraId, role: 'lara', content: '' },
+    ])
     setPhase('asking')
+
     try {
-      const result = await askQuestion(sessionId, question)
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `l-${Date.now()}`,
-          role: 'lara',
-          content: result.answer,
-          sources: result.sources,
-        },
-      ])
-      triggerHappy()
+      for await (const event of streamQuestion(sessionId, question)) {
+        if (event.type === 'token') {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === laraId ? { ...m, content: m.content + event.text } : m,
+            ),
+          )
+        } else if (event.type === 'sources') {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === laraId ? { ...m, sources: event.sources } : m,
+            ),
+          )
+        } else if (event.type === 'done') {
+          triggerHappy()
+        }
+      }
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: `err-${Date.now()}`,
-          role: 'lara',
-          content: "Sorry, something went wrong on my end. Please try again.",
-        },
-      ])
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === laraId
+            ? { ...m, content: 'Sorry, something went wrong on my end. Please try again.' }
+            : m,
+        ),
+      )
     } finally {
       setPhase('ready')
     }

@@ -1,4 +1,5 @@
 import logging
+from collections.abc import AsyncGenerator
 
 import groq as groq_sdk
 import httpx
@@ -73,6 +74,38 @@ async def generate(context: str, question: str) -> str:
         return await _call_cerebras(prompt)
 
 
+async def generate_stream(context: str, question: str) -> AsyncGenerator[str, None]:
+    """Stream answer tokens for *context* + *question*.
+
+    Yields raw text chunks as they arrive.  Applies the same circuit-breaker
+    routing as generate():
+    - Cerebras provider or circuit OPEN → yields full response as one chunk.
+    - Groq (default): streams tokens; on transient error falls back to
+      Cerebras and yields the full response as one chunk.
+    """
+    prompt = _build_prompt(context, question)
+
+    if settings.llm_provider == LLMProvider.cerebras:
+        yield await _call_cerebras(prompt)
+        return
+
+    if not _groq_breaker.allow_request():
+        logger.warning("Groq circuit open — streaming fallback to Cerebras")
+        yield await _call_cerebras(prompt)
+        return
+
+    try:
+        async for chunk in _stream_groq(prompt):
+            yield chunk
+        _groq_breaker.record_success()
+    except _GROQ_TRANSIENT as exc:
+        _groq_breaker.record_failure()
+        logger.warning(
+            "Groq transient error during stream (%s) — falling back to Cerebras", exc
+        )
+        yield await _call_cerebras(prompt)
+
+
 async def _call_groq(prompt: str) -> str:
     client = AsyncGroq(api_key=settings.groq_api_key)
     response = await client.chat.completions.create(
@@ -84,6 +117,24 @@ async def _call_groq(prompt: str) -> str:
         temperature=0.0,
     )
     return response.choices[0].message.content
+
+
+async def _stream_groq(prompt: str) -> AsyncGenerator[str, None]:
+    """Yield text tokens from Groq's streaming API."""
+    client = AsyncGroq(api_key=settings.groq_api_key)
+    stream = await client.chat.completions.create(
+        model=_MODEL_GROQ,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0.0,
+        stream=True,
+    )
+    async for chunk in stream:
+        content = chunk.choices[0].delta.content
+        if content:
+            yield content
 
 
 async def _call_cerebras(prompt: str) -> str:
