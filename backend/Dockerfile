@@ -9,6 +9,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY pyproject.toml .
 
 # Install production dependencies only (no dev group)
+# en_core_web_sm is declared as a URL dependency in pyproject.toml and
+# installed automatically — no separate spacy download step required.
 RUN uv sync --no-dev --no-editable
 
 # Copy application code
