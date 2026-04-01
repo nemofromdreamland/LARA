@@ -29,3 +29,19 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     answer: str
     sources: list[Source]
+
+
+class InteractionsRequest(BaseModel):
+    session_id: str
+
+
+class InteractionFlag(BaseModel):
+    drug_a: str  # drug whose leaflet mentions the interaction
+    drug_b: str  # drug being mentioned
+    excerpt: str  # supporting text passage from the leaflet
+
+
+class InteractionsResponse(BaseModel):
+    session_id: str
+    pairs_checked: int
+    interactions: list[InteractionFlag]

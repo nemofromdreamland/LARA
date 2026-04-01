@@ -62,6 +62,38 @@ def delete_session(
     return len(ids)
 
 
+def get_by_section(
+    session_id: str,
+    section: str,
+    drug_name: str | None = None,
+    client: ClientAPI | None = None,
+) -> list[dict]:
+    """Return all stored chunks matching *session_id* + *section*.
+
+    Optionally further filtered by *drug_name*.
+    Returns a list of dicts with keys: text, drug_name, section.
+    No semantic ranking — pure metadata filter.
+    """
+    collection = _get_collection(client)
+    where: dict = {
+        "$and": [
+            {"session_id": session_id},
+            {"section": section},
+        ]
+    }
+    if drug_name is not None:
+        where["$and"].append({"drug_name": drug_name})
+    results = collection.get(where=where, include=["documents", "metadatas"])
+    return [
+        {
+            "text": doc,
+            "drug_name": meta["drug_name"],
+            "section": meta["section"],
+        }
+        for doc, meta in zip(results["documents"], results["metadatas"])
+    ]
+
+
 def retrieve(
     query_embedding: list[float],
     session_id: str,

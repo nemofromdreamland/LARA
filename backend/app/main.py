@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routes import chat, health, session, upload
+from app.routes import chat, health, interactions, session, upload
 from app.services.session_store import expire_sessions
 from app.services.vector_store import delete_session
 
@@ -52,3 +52,4 @@ app.include_router(health.router)
 app.include_router(session.router)
 app.include_router(upload.router)
 app.include_router(chat.router)
+app.include_router(interactions.router)

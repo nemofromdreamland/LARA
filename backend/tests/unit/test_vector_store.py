@@ -1,7 +1,7 @@
 import chromadb
 import pytest
 
-from app.services.vector_store import delete_session, retrieve, store
+from app.services.vector_store import delete_session, get_by_section, retrieve, store
 
 
 @pytest.fixture
@@ -118,6 +118,50 @@ def test_delete_session_does_not_affect_other_sessions(chroma_client):
 
     kept = retrieve(_make_embedding(0.5), "sess-keep", top_k=5, client=chroma_client)
     assert len(kept) == 1
+
+
+def test_get_by_section_returns_matching_chunks(chroma_client):
+    store(
+        ["Interacts with warfarin."],
+        [_make_embedding(0.1)],
+        [
+            {
+                "session_id": "gs-1",
+                "drug_name": "aspirin",
+                "section": "drug_interactions",
+            }
+        ],
+        client=chroma_client,
+    )
+    store(
+        ["Take with food."],
+        [_make_embedding(0.2)],
+        [{"session_id": "gs-1", "drug_name": "aspirin", "section": "dosage"}],
+        client=chroma_client,
+    )
+    results = get_by_section("gs-1", "drug_interactions", client=chroma_client)
+    assert len(results) == 1
+    assert "warfarin" in results[0]["text"]
+
+
+def test_get_by_section_filters_by_drug_name(chroma_client):
+    for drug in ["aspirin", "warfarin"]:
+        store(
+            [f"{drug} interaction info."],
+            [_make_embedding(0.1)],
+            [{"session_id": "gs-2", "drug_name": drug, "section": "drug_interactions"}],
+            client=chroma_client,
+        )
+    results = get_by_section(
+        "gs-2", "drug_interactions", drug_name="aspirin", client=chroma_client
+    )
+    assert len(results) == 1
+    assert results[0]["drug_name"] == "aspirin"
+
+
+def test_get_by_section_empty_when_no_match(chroma_client):
+    results = get_by_section("nonexistent", "drug_interactions", client=chroma_client)
+    assert results == []
 
 
 def test_store_accumulates_across_calls(chroma_client):
