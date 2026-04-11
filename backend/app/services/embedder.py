@@ -1,6 +1,9 @@
+import asyncio
+from functools import partial
+
 from sentence_transformers import SentenceTransformer
 
-_MODEL_NAME = "all-MiniLM-L6-v2"
+_MODEL_NAME = "NeuML/pubmedbert-base-embeddings"
 _model: SentenceTransformer | None = None
 
 
@@ -11,10 +14,14 @@ def _get_model() -> SentenceTransformer:
     return _model
 
 
-def embed(texts: list[str]) -> list[list[float]]:
-    """Embed a list of texts using all-MiniLM-L6-v2 (local, no API key).
+def _encode_sync(texts: list[str]) -> list[list[float]]:
+    return _get_model().encode(texts, show_progress_bar=False).tolist()
 
-    Returns a list of 384-dimensional float vectors.
+
+async def embed(texts: list[str]) -> list[list[float]]:
+    """Embed texts using NeuML/pubmedbert-base-embeddings (768-dim, local).
+
+    Runs encoding in a thread-pool executor so the async event loop is not blocked.
     """
-    model = _get_model()
-    return model.encode(texts, show_progress_bar=False).tolist()
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, partial(_encode_sync, texts))

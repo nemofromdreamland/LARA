@@ -1,11 +1,32 @@
 import json
 from collections.abc import AsyncGenerator
 
-from app.models.schemas import ChatResponse, Source
+from app.models.schemas import ChatResponse, PrescriptionEntry, Source
 from app.services.embedder import embed
 from app.services.llm_client import generate, generate_stream
-from app.services.session_store import get_prescription, get_upload_result
+from app.services.session_store import get_prescription_entries, get_upload_result
 from app.services.vector_store import retrieve
+
+# Cosine distance threshold for retrieval quality filtering.
+# Chroma's HNSW uses cosine distance (range 0–2); 0 = identical, 2 = opposite.
+# Chunks above this threshold are semantically too distant to be useful context.
+_DISTANCE_THRESHOLD = 0.45
+
+
+def _format_prescription(entries: list[PrescriptionEntry]) -> str:
+    """Format structured prescription entries as a numbered bullet-point block."""
+    lines = ["[Prescription]"]
+    for i, e in enumerate(entries, 1):
+        lines.append(f"{i}. {e.drug_name.title()}")
+        if e.dosage:
+            lines.append(f"   • Dosage: {e.dosage}")
+        if e.frequency:
+            lines.append(f"   • Frequency: {e.frequency}")
+        if e.duration:
+            lines.append(f"   • Duration: {e.duration}")
+        if e.instructions:
+            lines.append(f"   • Instructions: {e.instructions}")
+    return "\n".join(lines)
 
 
 async def answer(session_id: str, question: str) -> ChatResponse:
@@ -18,8 +39,9 @@ async def answer(session_id: str, question: str) -> ChatResponse:
     4. Generate answer via LLM (hallucination-guarded).
     5. Return ChatResponse with answer + deduplicated source list.
     """
-    query_embedding = embed([question])[0]
-    chunks = retrieve(query_embedding, session_id, top_k=5)
+    query_embedding = (await embed([question]))[0]
+    raw_chunks = retrieve(query_embedding, session_id, top_k=5)
+    chunks = [c for c in raw_chunks if c["distance"] < _DISTANCE_THRESHOLD]
 
     if not chunks:
         drugs_found, missing = get_upload_result(session_id)
@@ -33,13 +55,9 @@ async def answer(session_id: str, question: str) -> ChatResponse:
         return ChatResponse(answer=" ".join(parts), sources=[])
 
     context_parts: list[str] = []
-    prescription = get_prescription(session_id)
-    if prescription:
-        # Include only the first 600 characters — enough to capture patient name,
-        # drug, dosage, and frequency without overwhelming the context with a full
-        # formatted document (some PDFs embed the entire patient info sheet).
-        snippet = prescription[:600].strip()
-        context_parts.append(f"[Prescription excerpt]\n{snippet}")
+    entries = get_prescription_entries(session_id)
+    if entries:
+        context_parts.append(_format_prescription(entries))
     context_parts.extend(
         f"[{c['drug_name']} — {c['section']}]\n{c['text']}" for c in chunks
     )
@@ -65,8 +83,9 @@ async def answer_stream(session_id: str, question: str) -> AsyncGenerator[str, N
       - A single ``[SOURCES]{json}`` line once generation is complete.
       - A final ``[DONE]`` line.
     """
-    query_embedding = embed([question])[0]
-    chunks = retrieve(query_embedding, session_id, top_k=5)
+    query_embedding = (await embed([question]))[0]
+    raw_chunks = retrieve(query_embedding, session_id, top_k=5)
+    chunks = [c for c in raw_chunks if c["distance"] < _DISTANCE_THRESHOLD]
 
     if not chunks:
         drugs_found, missing = get_upload_result(session_id)
@@ -83,10 +102,9 @@ async def answer_stream(session_id: str, question: str) -> AsyncGenerator[str, N
         return
 
     context_parts: list[str] = []
-    prescription = get_prescription(session_id)
-    if prescription:
-        snippet = prescription[:600].strip()
-        context_parts.append(f"[Prescription excerpt]\n{snippet}")
+    entries = get_prescription_entries(session_id)
+    if entries:
+        context_parts.append(_format_prescription(entries))
     context_parts.extend(
         f"[{c['drug_name']} — {c['section']}]\n{c['text']}" for c in chunks
     )

@@ -1,14 +1,28 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import groq as groq_sdk
+import httpx
 import pytest
 
+import app.services.llm_client as llm_module
 from app.services.llm_client import (
     SYSTEM_PROMPT,
     _build_prompt,
     generate,
     generate_stream,
 )
+
+
+@pytest.fixture(autouse=True)
+def reset_groq_singleton():
+    """Reset the module-level Groq singleton before each test.
+
+    Without this, the first test to call _get_groq_client() caches a client,
+    and subsequent tests that patch AsyncGroq never see their mock used.
+    """
+    llm_module._groq_client = None
+    yield
+    llm_module._groq_client = None
 
 
 def test_build_prompt_contains_context_and_question():
@@ -339,3 +353,41 @@ async def test_generate_stream_falls_back_on_rate_limit(
 
     assert tokens == ["Cerebras fallback."]
     mock_breaker.record_failure.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Cerebras retry on transient errors
+# ---------------------------------------------------------------------------
+
+
+@patch("app.services.llm_client.settings")
+@patch("app.services.llm_client.httpx.AsyncClient")
+async def test_cerebras_retries_on_503_then_succeeds(mock_client_cls, mock_settings):
+    """_call_cerebras retries transient 5xx and returns on eventual success."""
+    from app.config import LLMProvider
+
+    mock_settings.llm_provider = LLMProvider.cerebras
+    mock_settings.cerebras_api_key = "fake-cerebras-key"
+
+    # First call: 503 error response
+    fail_response = MagicMock()
+    fail_response.status_code = 503
+    fail_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "503 Service Unavailable", request=MagicMock(), response=fail_response
+    )
+
+    # Second call: success
+    ok_response = MagicMock()
+    ok_response.raise_for_status = MagicMock()
+    ok_response.json.return_value = {
+        "choices": [{"message": {"content": "Retry succeeded."}}]
+    }
+
+    mock_http = AsyncMock()
+    mock_http.post = AsyncMock(side_effect=[fail_response, ok_response])
+    mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_http)
+    mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    result = await generate("ctx", "q")
+    assert result == "Retry succeeded."
+    assert mock_http.post.call_count == 2

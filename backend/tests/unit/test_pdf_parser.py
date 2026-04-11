@@ -1,7 +1,7 @@
 import fitz
 import pytest
 
-from app.services.pdf_parser import extract_text
+from app.services.pdf_parser import PDFExtractionError, extract_text
 
 
 def _make_pdf(text: str) -> bytes:
@@ -43,6 +43,6 @@ def test_extract_text_empty_pdf():
     assert result == ""
 
 
-def test_extract_text_invalid_bytes():
-    with pytest.raises(Exception):
+def test_extract_text_invalid_bytes_raises_extraction_error():
+    with pytest.raises(PDFExtractionError, match="Could not read PDF"):
         extract_text(b"not a pdf")

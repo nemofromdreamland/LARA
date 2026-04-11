@@ -33,7 +33,9 @@ _NUMBERED_ITEM_RE = re.compile(
 # spaCy — lazy-loaded so startup is not blocked if the model is missing
 # ---------------------------------------------------------------------------
 
-# Entity labels that are purely numeric/temporal — never drug names.
+# Entity labels that are definitely NOT drug names.
+# We explicitly skip people, organisations, and geographic entities —
+# these are the main source of false positives from prescription headers.
 _SKIP_ENT_LABELS = {
     "DATE",
     "TIME",
@@ -43,22 +45,108 @@ _SKIP_ENT_LABELS = {
     "MONEY",
     "QUANTITY",
     "LANGUAGE",
+    # Entities that appear in prescription headers and metadata:
+    "PERSON",  # Dr. Mitchell, Sarah, patient names
+    "ORG",  # Wellness Healthcare, Mitchell Clinic
+    "GPE",  # cities, countries — "City" in clinic addresses
+    "FAC",  # buildings, facilities
+    "LOC",  # geographic locations
+    "NORP",  # nationalities, religious or political groups
+    "EVENT",  # named events
+    "WORK_OF_ART",  # books, titles
+    "LAW",  # laws and acts
 }
 
-# Common words that appear capitalized in prescriptions but are not drugs.
+# Words that appear capitalised in prescriptions but are never drug names.
+# This covers: column headers, metadata labels, clinic name fragments,
+# credentials, instruction words, and common personal names.
 _STOPWORDS: set[str] = {
+    # --- prescription structure and metadata ---
     "patient",
     "doctor",
+    "physician",
+    "prescriber",
     "hospital",
     "pharmacy",
     "clinic",
     "institute",
+    "institution",
     "date",
     "name",
     "address",
     "phone",
     "fax",
     "email",
+    "signature",
+    "prescription",
+    "prescribed",
+    # --- column headers that appear in tabular prescriptions ---
+    "frequency",
+    "duration",
+    "instructions",
+    "dosage",
+    "quantity",
+    "refills",
+    "dispense",
+    "notes",
+    "diagnosis",
+    # --- healthcare / clinic name fragments ---
+    "wellness",
+    "healthcare",
+    "medicine",
+    "medical",
+    "health",
+    "care",
+    "center",
+    "centre",
+    "service",
+    "services",
+    "general",
+    "internal",
+    "specialty",
+    "practice",
+    "associates",
+    "group",
+    "city",
+    "community",
+    # --- credentials (appear after doctor names) ---
+    "facp",
+    "facs",
+    "frcpc",
+    "frcs",
+    "mbbs",
+    "bchir",
+    # --- patient demographics ---
+    "gender",
+    "male",
+    "female",
+    "dob",
+    "weight",
+    "height",
+    "allergy",
+    "allergies",
+    # --- dosing instructions ---
+    "daily",
+    "twice",
+    "once",
+    "every",
+    "each",
+    "take",
+    "oral",
+    "tablet",
+    "capsule",
+    "solution",
+    "injection",
+    "morning",
+    "evening",
+    "night",
+    "food",
+    "water",
+    # --- administrative ---
+    "rx",
+    "sig",
+    "qty",
+    # --- calendar ---
     "monday",
     "tuesday",
     "wednesday",
@@ -77,29 +165,7 @@ _STOPWORDS: set[str] = {
     "october",
     "november",
     "december",
-    "general",
-    "medical",
-    "health",
-    "care",
-    "center",
-    "service",
-    "rx",
-    "sig",
-    "refills",
-    "qty",
-    "dispense",
-    "daily",
-    "twice",
-    "once",
-    "every",
-    "each",
-    "take",
-    "oral",
-    "tablet",
-    "capsule",
-    "solution",
-    "injection",
-    # common patient/doctor name parts
+    # --- common patient / doctor name fragments ---
     "john",
     "jane",
     "mary",
@@ -110,6 +176,12 @@ _STOPWORDS: set[str] = {
     "david",
     "richard",
     "thomas",
+    "sarah",
+    "emily",
+    "lisa",
+    "karen",
+    "patricia",
+    "mitchell",
     "smith",
     "jones",
     "brown",
@@ -120,14 +192,33 @@ _STOPWORDS: set[str] = {
     "anderson",
     "martin",
     "white",
+    "harris",
+    "clark",
+    "lewis",
+    "robinson",
+    "walker",
+    "hall",
+    "allen",
+    "young",
+    "king",
+    "wright",
+    "scott",
+    "green",
+    "baker",
+    "adams",
+    "nelson",
+    "carter",
+    "hill",
 }
 
 _nlp = None
+_nlp_load_attempted = False
 
 
 def _get_nlp():
-    global _nlp
-    if _nlp is None:
+    global _nlp, _nlp_load_attempted
+    if not _nlp_load_attempted:
+        _nlp_load_attempted = True
         try:
             import spacy
 
@@ -135,19 +226,25 @@ def _get_nlp():
             logger.debug("spaCy en_core_web_sm loaded")
         except Exception as exc:
             logger.warning("spaCy model unavailable (%s) — using regex only", exc)
-            _nlp = False  # sentinel: don't retry
-    return _nlp if _nlp is not False else None
+    return _nlp
 
 
 def _extract_spacy(text: str) -> list[str]:
-    """Return lowercased drug name candidates using spaCy NER + POS tagging."""
+    """Return lowercased drug name candidates using spaCy NER.
+
+    Only tokens belonging to named entities NOT in _SKIP_ENT_LABELS are
+    considered. We intentionally do NOT include bare PROPN tokens, because
+    that catches clinic names, doctor names, and column headers like
+    'Frequency' and 'Duration' which are tagged as proper nouns by spaCy
+    but are definitely not medications.
+    """
     nlp = _get_nlp()
     if nlp is None:
         return []
 
     doc = nlp(text)
 
-    # Collect token indices that belong to a non-numeric named entity.
+    # Collect token indices that belong to a qualifying named entity.
     ent_token_ids: set[int] = set()
     for ent in doc.ents:
         if ent.label_ not in _SKIP_ENT_LABELS:
@@ -156,9 +253,9 @@ def _extract_spacy(text: str) -> list[str]:
 
     results: list[str] = []
     for tok in doc:
-        is_ne = tok.i in ent_token_ids
-        is_propn = tok.pos_ == "PROPN"
-        if not (is_ne or is_propn):
+        # Require membership in a qualifying named entity — PROPN alone is
+        # too broad and is the main source of false positives.
+        if tok.i not in ent_token_ids:
             continue
         if not tok.is_alpha or len(tok.text) < 4:
             continue
@@ -183,17 +280,18 @@ def extract_drug_names(text: str) -> list[str]:
     """Return a deduplicated, lowercase list of drug names found in *text*.
 
     Strategy (union of two complementary methods):
-    1. spaCy NER + POS — catches names with no known suffix and unusual
-       formats; falls back gracefully if the model is not installed.
+    1. spaCy NER — catches drug names tagged as named entities (PRODUCT, etc.);
+       explicitly excludes PERSON, ORG, GPE, and other non-drug entity types.
     2. Regex heuristics — RX-line dosage pattern, numbered-list pattern,
-       pharmaceutical suffix pattern; supplements spaCy for names tagged
-       with generic POS labels (NOUN/ADV) and no entity span.
+       pharmaceutical suffix pattern; these are the primary reliable source
+       when the LLM extraction fallback is active.
     """
     candidates = _extract_spacy(text) + _extract_regex(text)
     seen: set[str] = set()
     result: list[str] = []
     for name in candidates:
-        if name not in seen:
+        name = name.strip()
+        if name and name not in seen and name not in _STOPWORDS:
             seen.add(name)
             result.append(name)
     return result

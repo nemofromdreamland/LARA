@@ -58,3 +58,24 @@ def test_parametrized_sizes(size: int, overlap: int):
     chunks = chunk_text(text, chunk_size=size, overlap=overlap)
     assert all(len(c) <= size for c in chunks)
     assert len(chunks) >= 1
+
+
+def test_paragraphs_kept_together():
+    """Short paragraphs are not split across chunk boundaries."""
+    para1 = ("First paragraph about indications. " * 5).strip()  # ~175 chars
+    para2 = ("Second paragraph about warnings. " * 5).strip()  # ~160 chars
+    text = para1 + "\n\n" + para2
+    chunks = chunk_text(text, chunk_size=500, overlap=50)
+    assert len(chunks) == 2
+    assert chunks[0] == para1
+    assert chunks[1] == para2
+
+
+def test_overlap_equal_to_chunk_size_raises():
+    with pytest.raises(ValueError, match="overlap"):
+        chunk_text("some text", chunk_size=100, overlap=100)
+
+
+def test_overlap_greater_than_chunk_size_raises():
+    with pytest.raises(ValueError, match="overlap"):
+        chunk_text("some text", chunk_size=100, overlap=150)

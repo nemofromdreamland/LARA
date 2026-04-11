@@ -1,11 +1,14 @@
 import time
 from unittest.mock import patch
 
+from app.models.schemas import PrescriptionEntry
 from app.services.session_store import (
     expire_sessions,
     get_prescription,
+    get_prescription_entries,
     get_upload_result,
     save_prescription,
+    save_prescription_entries,
     save_upload_result,
 )
 
@@ -86,3 +89,24 @@ def test_expire_sessions_returns_only_expired():
 def test_expire_sessions_empty_store():
     _fresh_state()
     assert expire_sessions(ttl_seconds=7200) == []
+
+
+def test_save_and_get_prescription_entries():
+    _fresh_state()
+    save_prescription("s5", "text")
+    entries = [
+        PrescriptionEntry(drug_name="ibuprofen", dosage="400mg", frequency="TID"),
+        PrescriptionEntry(drug_name="azithromycin", dosage="500mg"),
+    ]
+    save_prescription_entries("s5", entries)
+    result = get_prescription_entries("s5")
+    assert len(result) == 2
+    assert result[0].drug_name == "ibuprofen"
+    assert result[0].dosage == "400mg"
+    assert result[1].drug_name == "azithromycin"
+    assert result[1].frequency is None
+
+
+def test_get_prescription_entries_returns_empty_for_missing_session():
+    _fresh_state()
+    assert get_prescription_entries("nonexistent") == []

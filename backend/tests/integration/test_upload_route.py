@@ -4,7 +4,12 @@ from unittest.mock import AsyncMock, patch
 import fitz
 import pytest
 
+from app.models.schemas import PrescriptionEntry
 from app.services.dailymed import LeafletSection
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
 def _make_pdf(text: str) -> bytes:
@@ -27,18 +32,36 @@ MOCK_SECTIONS = [
     ),
 ]
 
+# A structured PrescriptionEntry returned by the mocked parse_prescription.
+MOCK_ENTRIES = [
+    PrescriptionEntry(
+        drug_name="lisinopril",
+        dosage="10mg",
+        frequency="once daily",
+    )
+]
+
 
 @pytest.fixture
 def pdf_with_drug() -> bytes:
     return _make_pdf("Lisinopril 10mg once daily")
 
 
+# ---------------------------------------------------------------------------
+# Success path
+# ---------------------------------------------------------------------------
+
+
+@patch("app.routes.upload.parse_prescription", new_callable=AsyncMock)
 @patch("app.routes.upload.fetch_leaflet_sections", new_callable=AsyncMock)
-@patch("app.routes.upload.embed")
+@patch("app.routes.upload.embed", new_callable=AsyncMock)
 @patch("app.routes.upload.store")
-def test_upload_success(mock_store, mock_embed, mock_fetch, client, pdf_with_drug):
+def test_upload_success(
+    mock_store, mock_embed, mock_fetch, mock_parse, client, pdf_with_drug
+):
+    mock_parse.return_value = MOCK_ENTRIES
     mock_fetch.return_value = MOCK_SECTIONS
-    mock_embed.return_value = [[0.1] * 384] * 4  # enough for all chunks
+    mock_embed.return_value = [[0.1] * 768] * 4
     mock_store.return_value = None
 
     response = client.post(
@@ -54,12 +77,14 @@ def test_upload_success(mock_store, mock_embed, mock_fetch, client, pdf_with_dru
     assert data["status"] == "ok"
 
 
+@patch("app.routes.upload.parse_prescription", new_callable=AsyncMock)
 @patch("app.routes.upload.fetch_leaflet_sections", new_callable=AsyncMock)
-@patch("app.routes.upload.embed")
+@patch("app.routes.upload.embed", new_callable=AsyncMock)
 @patch("app.routes.upload.store")
 def test_upload_unknown_drug_returns_no_leaflets(
-    mock_store, mock_embed, mock_fetch, client
+    mock_store, mock_embed, mock_fetch, mock_parse, client
 ):
+    mock_parse.return_value = MOCK_ENTRIES
     mock_fetch.return_value = []  # DailyMed found nothing
     pdf = _make_pdf("Lisinopril 10mg once daily")
 
@@ -73,6 +98,11 @@ def test_upload_unknown_drug_returns_no_leaflets(
     assert data["status"] == "no_leaflets_found"
     assert data["drugs_found"] == []
     assert "lisinopril" in data["missing_leaflets"]
+
+
+# ---------------------------------------------------------------------------
+# Validation errors
+# ---------------------------------------------------------------------------
 
 
 def test_upload_rejects_non_pdf(client):
@@ -97,8 +127,10 @@ def test_upload_empty_pdf_returns_422(client):
     assert response.status_code == 422
 
 
-def test_upload_pdf_no_drugs_returns_422(client):
-    pdf = _make_pdf("The patient is feeling well today and needs no medication.")
+@patch("app.routes.upload.parse_prescription", new_callable=AsyncMock)
+def test_upload_pdf_no_drugs_returns_422(mock_parse, client):
+    mock_parse.return_value = []  # LLM + fallback both found nothing
+    pdf = _make_pdf("The patient is feeling well today.")
 
     response = client.post(
         "/upload",

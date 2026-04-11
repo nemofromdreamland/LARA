@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 import chromadb
 from chromadb import ClientAPI
 
@@ -31,13 +33,10 @@ def store(
     """Persist *chunks* with their *embeddings* and *metadatas* in Chroma.
 
     Each metadata dict must contain at minimum: session_id, drug_name, section.
-    IDs are derived from session_id + positional index to avoid collisions.
+    IDs are random UUIDs to guarantee uniqueness across concurrent uploads.
     """
     collection = _get_collection(client)
-    session_id = metadatas[0]["session_id"]
-    existing = collection.get(where={"session_id": session_id})
-    offset = len(existing["ids"])
-    ids = [f"{session_id}_{offset + i}" for i in range(len(chunks))]
+    ids = [str(uuid4()) for _ in chunks]
     collection.add(
         ids=ids,
         embeddings=embeddings,
@@ -109,15 +108,17 @@ def retrieve(
         query_embeddings=[query_embedding],
         n_results=top_k,
         where={"session_id": session_id},
-        include=["documents", "metadatas"],
+        include=["documents", "metadatas", "distances"],
     )
     docs = results["documents"][0]
     metas = results["metadatas"][0]
+    distances = results["distances"][0]
     return [
         {
             "text": doc,
             "drug_name": meta["drug_name"],
             "section": meta["section"],
+            "distance": dist,
         }
-        for doc, meta in zip(docs, metas)
+        for doc, meta, dist in zip(docs, metas, distances)
     ]

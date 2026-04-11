@@ -73,7 +73,21 @@ def test_result_keys(chroma_client):
         client=chroma_client,
     )
     results = retrieve(_make_embedding(0.3), "sess-3", top_k=1, client=chroma_client)
-    assert set(results[0].keys()) == {"text", "drug_name", "section"}
+    assert set(results[0].keys()) == {"text", "drug_name", "section", "distance"}
+
+
+def test_retrieve_returns_distances(chroma_client):
+    """retrieve() must include a numeric 'distance' field on every result."""
+    store(
+        ["Aspirin is used for pain relief."],
+        [_make_embedding(0.5)],
+        [{"session_id": "sess-dist", "drug_name": "aspirin", "section": "indications"}],
+        client=chroma_client,
+    )
+    results = retrieve(_make_embedding(0.5), "sess-dist", top_k=1, client=chroma_client)
+    assert len(results) == 1
+    assert "distance" in results[0]
+    assert isinstance(results[0]["distance"], float)
 
 
 def test_retrieve_empty_session_returns_empty(chroma_client):

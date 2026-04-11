@@ -2,6 +2,8 @@ import logging
 import time
 from dataclasses import dataclass, field
 
+from app.models.schemas import PrescriptionEntry
+
 logger = logging.getLogger(__name__)
 
 
@@ -11,6 +13,7 @@ class SessionData:
     created_at: float
     drugs_found: list[str] = field(default_factory=list)
     missing_leaflets: list[str] = field(default_factory=list)
+    prescription_entries: list[PrescriptionEntry] = field(default_factory=list)
 
 
 # session_id → SessionData
@@ -36,6 +39,21 @@ def save_upload_result(
 def get_prescription(session_id: str) -> str | None:
     entry = _sessions.get(session_id)
     return entry.prescription if entry is not None else None
+
+
+def save_prescription_entries(
+    session_id: str, entries: list[PrescriptionEntry]
+) -> None:
+    """Store structured prescription entries for *session_id*."""
+    entry = _sessions.get(session_id)
+    if entry is not None:
+        entry.prescription_entries = entries
+
+
+def get_prescription_entries(session_id: str) -> list[PrescriptionEntry]:
+    """Return the structured prescription entries for *session_id*, or []."""
+    entry = _sessions.get(session_id)
+    return entry.prescription_entries if entry is not None else []
 
 
 def get_upload_result(

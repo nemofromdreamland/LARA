@@ -113,8 +113,18 @@ def test_suffix_extracts_acetaminophen_via_phen():
 # ---------------------------------------------------------------------------
 
 
-def test_spacy_extracts_inline_drugs():
-    names = _extract_spacy("The patient takes Omeprazole, Amoxicillin and Sertraline.")
+def test_spacy_returns_list_for_inline_drugs():
+    # _extract_spacy now only returns named entities that are not PERSON/ORG/GPE/etc.
+    # Drug names not recognised as entities by en_core_web_sm return nothing here;
+    # they are caught downstream by _extract_regex via pharmaceutical suffix patterns.
+    result = _extract_spacy("The patient takes Omeprazole, Amoxicillin and Sertraline.")
+    assert isinstance(result, list)
+    # Verify the combined extractor still finds them (via _SUFFIX_RE).
+    from app.services.drug_extractor import extract_drug_names
+
+    names = extract_drug_names(
+        "The patient takes Omeprazole, Amoxicillin and Sertraline."
+    )
     assert "omeprazole" in names
     assert "amoxicillin" in names
     assert "sertraline" in names
@@ -170,7 +180,9 @@ def test_extract_drug_names_works_without_spacy(monkeypatch):
     """If spaCy fails to load, regex results should still be returned."""
     import app.services.drug_extractor as de
 
-    monkeypatch.setattr(de, "_nlp", False)  # sentinel: simulate missing model
+    # Simulate a failed spaCy load: model is None and load was already attempted.
+    monkeypatch.setattr(de, "_nlp", None)
+    monkeypatch.setattr(de, "_nlp_load_attempted", True)
 
     names = extract_drug_names("Sertraline 50mg daily\nLisinopril 10mg once daily")
     assert "sertraline" in names

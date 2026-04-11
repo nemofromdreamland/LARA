@@ -4,7 +4,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +12,19 @@ DAILYMED_BASE = "https://dailymed.nlm.nih.gov/dailymed/services/v2"
 
 # Matches trailing dosage info: "50 mg", "10mg", "0.5 mcg/ml", etc.
 _DOSAGE_RE = re.compile(r"\s+\d[\d.,]*\s*(?:mg|mcg|ml|g|iu|%|units?)\S*", re.IGNORECASE)
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Return True only for errors worth retrying.
+
+    Retries 5xx, 429 (rate limit), and network-level failures.
+    Does NOT retry 404 (drug not found — permanent) or other 4xx.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code == 429 or exc.response.status_code >= 500
+    return isinstance(
+        exc, (httpx.ConnectError, httpx.TimeoutException, httpx.RemoteProtocolError)
+    )
 
 
 def _normalize_drug_name(name: str) -> str:
@@ -54,6 +67,7 @@ class LeafletSection:
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=8),
+    retry=retry_if_exception(_is_retryable),
     reraise=True,
 )
 async def _fetch_set_id(drug_name: str, client: httpx.AsyncClient) -> str | None:
@@ -73,6 +87,7 @@ async def _fetch_set_id(drug_name: str, client: httpx.AsyncClient) -> str | None
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=8),
+    retry=retry_if_exception(_is_retryable),
     reraise=True,
 )
 async def _fetch_sections_raw(set_id: str, client: httpx.AsyncClient) -> list[dict]:
