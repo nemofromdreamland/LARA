@@ -8,6 +8,7 @@ from app.services.embedder import embed
 from app.services.llm_client import generate, generate_stream
 from app.services.session_store import get_prescription_entries, get_upload_result
 from app.services.vector_store import retrieve
+from app.utils import get_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ def trim_to_budget(chunks_with_scores: list, max_chars: int) -> list:
     chunks until the next one would overflow the budget.  The prescription summary
     must be counted separately by the caller before invoking this function.
     """
+    rid = get_request_id()
     sorted_chunks = sorted(chunks_with_scores, key=lambda c: c["distance"])
     kept: list = []
     total = 0
@@ -36,9 +38,15 @@ def trim_to_budget(chunks_with_scores: list, max_chars: int) -> list:
 
     trimmed = len(sorted_chunks) - len(kept)
     if trimmed:
-        logger.info("trim_to_budget: dropped %d chunk(s), %d chars kept", trimmed, total)
+        logger.debug(
+            "trim_to_budget: dropped %d chunk(s), %d chars kept", trimmed, total,
+            extra={"request_id": rid},
+        )
     else:
-        logger.info("trim_to_budget: all %d chunk(s) fit, %d chars kept", len(kept), total)
+        logger.debug(
+            "trim_to_budget: all %d chunk(s) fit, %d chars kept", len(kept), total,
+            extra={"request_id": rid},
+        )
     return kept
 
 
@@ -68,9 +76,16 @@ async def answer(session_id: str, question: str) -> ChatResponse:
     4. Generate answer via LLM (hallucination-guarded).
     5. Return ChatResponse with answer + deduplicated source list.
     """
+    rid = get_request_id()
     query_embedding = (await embed([question]))[0]
     raw_chunks = await retrieve(query_embedding, session_id, top_k=5)
     chunks = [c for c in raw_chunks if c["distance"] < _DISTANCE_THRESHOLD]
+
+    logger.debug(
+        "RAG retrieve: %d raw chunks, %d passed threshold",
+        len(raw_chunks), len(chunks),
+        extra={"request_id": rid},
+    )
 
     if not chunks:
         drugs_found, missing = get_upload_result(session_id)
@@ -117,9 +132,16 @@ async def answer_stream(session_id: str, question: str) -> AsyncGenerator[str, N
       - A single ``[SOURCES]{json}`` line once generation is complete.
       - A final ``[DONE]`` line.
     """
+    rid = get_request_id()
     query_embedding = (await embed([question]))[0]
     raw_chunks = await retrieve(query_embedding, session_id, top_k=5)
     chunks = [c for c in raw_chunks if c["distance"] < _DISTANCE_THRESHOLD]
+
+    logger.debug(
+        "RAG stream retrieve: %d raw chunks, %d passed threshold",
+        len(raw_chunks), len(chunks),
+        extra={"request_id": rid},
+    )
 
     if not chunks:
         drugs_found, missing = get_upload_result(session_id)

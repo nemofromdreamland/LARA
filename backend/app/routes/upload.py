@@ -15,7 +15,7 @@ from app.services.session_store import (
     save_upload_result,
 )
 from app.services.vector_store import store
-from app.utils import run_sync
+from app.utils import get_request_id, run_sync
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,8 @@ async def upload(
     session_id: str = Form(...),
     file: UploadFile = File(...),
 ) -> UploadResponse:
+    rid = get_request_id()
+
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
 
@@ -64,6 +66,10 @@ async def upload(
         raise HTTPException(
             status_code=400, detail="File does not appear to be a valid PDF."
         )
+
+    logger.info(
+        "upload started for session %s", session_id, extra={"request_id": rid}
+    )
 
     try:
         text = await run_sync(extract_text, raw_bytes)
@@ -97,12 +103,18 @@ async def upload(
 
     for drug, result in zip(drug_names, results):
         if isinstance(result, Exception):
-            logger.warning("DailyMed fetch failed for %s: %s", drug, result)
+            logger.warning(
+                "DailyMed fetch failed for %s: %s", drug, result,
+                extra={"request_id": rid},
+            )
             missing_drugs.append(drug)
             continue
         _, chunks, metas = result
         if not chunks:
-            logger.warning("No DailyMed leaflet found for drug: %s", drug)
+            logger.warning(
+                "No DailyMed leaflet found for drug: %s", drug,
+                extra={"request_id": rid},
+            )
             missing_drugs.append(drug)
             continue
         embeddings = await embed(chunks)
@@ -110,6 +122,11 @@ async def upload(
         stored_drugs.append(drug)
 
     save_upload_result(session_id, stored_drugs, missing_drugs)
+
+    logger.info(
+        "drugs found: %d stored, %d missing", len(stored_drugs), len(missing_drugs),
+        extra={"request_id": rid},
+    )
 
     return UploadResponse(
         session_id=session_id,

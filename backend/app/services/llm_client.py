@@ -8,6 +8,7 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from app.config import LLMProvider, settings
 from app.services.circuit_breaker import CircuitBreaker
+from app.utils import get_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +85,7 @@ async def generate(context: str, question: str) -> str:
              fall back to Cerebras
            - Other errors          → re-raise immediately
     """
+    rid = get_request_id()
     prompt = _build_prompt(context, question)
 
     if settings.llm_provider == LLMProvider.cerebras:
@@ -91,7 +93,10 @@ async def generate(context: str, question: str) -> str:
 
     # --- Groq path with circuit breaker ---
     if not _groq_breaker.allow_request():
-        logger.warning("Groq circuit open — falling back to Cerebras")
+        logger.info(
+            "LLM fallback activated — Groq circuit open",
+            extra={"request_id": rid},
+        )
         return await _call_cerebras(prompt)
 
     try:
@@ -100,7 +105,10 @@ async def generate(context: str, question: str) -> str:
         return result
     except _GROQ_TRANSIENT as exc:
         _groq_breaker.record_failure()
-        logger.warning("Groq transient error (%s) — falling back to Cerebras", exc)
+        logger.info(
+            "LLM fallback activated — Groq transient error: %s", exc,
+            extra={"request_id": rid},
+        )
         return await _call_cerebras(prompt)
 
 
@@ -113,6 +121,7 @@ async def generate_stream(context: str, question: str) -> AsyncGenerator[str, No
     - Groq (default): streams tokens; on transient error falls back to
       Cerebras and yields the full response as one chunk.
     """
+    rid = get_request_id()
     prompt = _build_prompt(context, question)
 
     if settings.llm_provider == LLMProvider.cerebras:
@@ -120,7 +129,10 @@ async def generate_stream(context: str, question: str) -> AsyncGenerator[str, No
         return
 
     if not _groq_breaker.allow_request():
-        logger.warning("Groq circuit open — streaming fallback to Cerebras")
+        logger.info(
+            "LLM fallback activated — Groq circuit open (stream)",
+            extra={"request_id": rid},
+        )
         yield await _call_cerebras(prompt)
         return
 
@@ -130,8 +142,9 @@ async def generate_stream(context: str, question: str) -> AsyncGenerator[str, No
         _groq_breaker.record_success()
     except _GROQ_TRANSIENT as exc:
         _groq_breaker.record_failure()
-        logger.warning(
-            "Groq transient error during stream (%s) — falling back to Cerebras", exc
+        logger.info(
+            "LLM fallback activated — Groq transient error during stream: %s", exc,
+            extra={"request_id": rid},
         )
         yield await _call_cerebras(prompt)
 
@@ -206,11 +219,16 @@ async def extract_medications(prescription_text: str) -> str:
     EXTRACTION_SYSTEM_PROMPT instead of the hallucination-guard prompt.
     Returns a raw JSON string; callers are responsible for parsing it.
     """
+    rid = get_request_id()
+
     if settings.llm_provider == LLMProvider.cerebras:
         return await _call_cerebras(prescription_text, EXTRACTION_SYSTEM_PROMPT)
 
     if not _groq_breaker.allow_request():
-        logger.warning("Groq circuit open — extraction falling back to Cerebras")
+        logger.info(
+            "LLM fallback activated — extraction, Groq circuit open",
+            extra={"request_id": rid},
+        )
         return await _call_cerebras(prescription_text, EXTRACTION_SYSTEM_PROMPT)
 
     try:
@@ -219,7 +237,8 @@ async def extract_medications(prescription_text: str) -> str:
         return result
     except _GROQ_TRANSIENT as exc:
         _groq_breaker.record_failure()
-        logger.warning(
-            "Groq transient error during extraction (%s) — using Cerebras", exc
+        logger.info(
+            "LLM fallback activated — extraction Groq transient error: %s", exc,
+            extra={"request_id": rid},
         )
         return await _call_cerebras(prescription_text, EXTRACTION_SYSTEM_PROMPT)

@@ -6,6 +6,8 @@ from dataclasses import dataclass
 import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
+from app.utils import get_request_id
+
 logger = logging.getLogger(__name__)
 
 DAILYMED_BASE = "https://dailymed.nlm.nih.gov/dailymed/services/v2"
@@ -79,7 +81,10 @@ async def _fetch_set_id(drug_name: str, client: httpx.AsyncClient) -> str | None
     response.raise_for_status()
     items = response.json().get("data", [])
     if not items:
-        logger.warning("DailyMed: no SPL found for drug %r", drug_name)
+        logger.warning(
+            "DailyMed: no SPL found for drug %r", drug_name,
+            extra={"request_id": get_request_id()},
+        )
         return None
     return items[0].get("setid")
 
@@ -147,6 +152,7 @@ async def fetch_leaflet_sections(drug_name: str) -> list[LeafletSection]:
     Returns an empty list (with a warning) if the drug is not found.
     Raises httpx.HTTPError after 3 retries if the API is unavailable.
     """
+    rid = get_request_id()
     async with httpx.AsyncClient(timeout=15.0) as client:
         set_id = await _fetch_set_id(drug_name, client)
 
@@ -157,6 +163,7 @@ async def fetch_leaflet_sections(drug_name: str) -> list[LeafletSection]:
                     "DailyMed: retrying %r with normalized name %r",
                     drug_name,
                     normalized,
+                    extra={"request_id": rid},
                 )
                 set_id = await _fetch_set_id(normalized, client)
 
