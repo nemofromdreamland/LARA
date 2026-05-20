@@ -1,16 +1,35 @@
 import logging
 import re
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
 import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
+from app.config import settings
 from app.utils import get_request_id
 
 logger = logging.getLogger(__name__)
 
 DAILYMED_BASE = "https://dailymed.nlm.nih.gov/dailymed/services/v2"
+
+_cache: dict[str, tuple[list, float]] = {}  # normalized_drug_name → (sections, timestamp)
+
+
+def _cache_get(drug_name: str) -> list | None:
+    entry = _cache.get(drug_name)
+    if entry and (time.time() - entry[1]) < settings.dailymed_cache_ttl_seconds:
+        return entry[0]
+    return None
+
+
+def _cache_set(drug_name: str, sections: list) -> None:
+    _cache[drug_name] = (sections, time.time())
+
+
+def clear_dailymed_cache() -> None:
+    _cache.clear()
 
 # Matches trailing dosage info: "50 mg", "10mg", "0.5 mcg/ml", etc.
 _DOSAGE_RE = re.compile(r"\s+\d[\d.,]*\s*(?:mg|mcg|ml|g|iu|%|units?)\S*", re.IGNORECASE)
@@ -149,26 +168,39 @@ async def fetch_leaflet_sections(drug_name: str) -> list[LeafletSection]:
     If the original name returns no results, retries once with a normalized
     form (lowercase, dosage info stripped) before giving up.
 
+    Results are cached in-process by normalized drug name for
+    settings.dailymed_cache_ttl_seconds (default 24 h) to avoid redundant
+    API calls when the same drug appears across multiple uploads.
+
     Returns an empty list (with a warning) if the drug is not found.
     Raises httpx.HTTPError after 3 retries if the API is unavailable.
     """
+    normalized_name = _normalize_drug_name(drug_name)
+
+    cached = _cache_get(normalized_name)
+    if cached is not None:
+        logger.debug("DailyMed cache hit: %s", drug_name)
+        return cached
+
     rid = get_request_id()
     async with httpx.AsyncClient(timeout=15.0) as client:
         set_id = await _fetch_set_id(drug_name, client)
 
         if set_id is None:
-            normalized = _normalize_drug_name(drug_name)
-            if normalized and normalized != drug_name.lower():
+            if normalized_name and normalized_name != drug_name.lower():
                 logger.info(
                     "DailyMed: retrying %r with normalized name %r",
                     drug_name,
-                    normalized,
+                    normalized_name,
                     extra={"request_id": rid},
                 )
-                set_id = await _fetch_set_id(normalized, client)
+                set_id = await _fetch_set_id(normalized_name, client)
 
         if set_id is None:
-            return []
+            sections: list[LeafletSection] = []
+        else:
+            raw = await _fetch_sections_raw(set_id, client)
+            sections = _parse_sections(raw, drug_name)
 
-        raw = await _fetch_sections_raw(set_id, client)
-        return _parse_sections(raw, drug_name)
+    _cache_set(normalized_name, sections)
+    return sections

@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     session_ttl_seconds: int = Field(default=7200, ge=300)  # min 5 min, default 2 hours
     expiry_interval_seconds: int = 600  # run eviction every 10 minutes
     max_context_chars: int = 12_000
+    dailymed_cache_ttl_seconds: int = 86_400
 
     @model_validator(mode="after")
     def _check_api_key(self) -> "Settings":

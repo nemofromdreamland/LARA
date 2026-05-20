@@ -1,15 +1,26 @@
+from unittest.mock import patch
+
 import httpx
 import pytest
 import respx
 
+from app.config import settings
 from app.services.dailymed import (
     LeafletSection,
     _fetch_set_id,
     _normalize_drug_name,
     _parse_sections,
     _parse_spl_xml,
+    clear_dailymed_cache,
     fetch_leaflet_sections,
 )
+
+
+@pytest.fixture(autouse=True)
+def reset_cache():
+    clear_dailymed_cache()
+    yield
+    clear_dailymed_cache()
 
 DAILYMED_BASE = "https://dailymed.nlm.nih.gov/dailymed/services/v2"
 
@@ -241,3 +252,56 @@ async def test_fetch_leaflet_sections_no_retry_when_already_normalized():
     sections = await fetch_leaflet_sections("notadrug")
     assert sections == []
     assert respx.calls.call_count == 1
+
+
+# ── TTL cache ─────────────────────────────────────────────────────────────────
+
+
+@respx.mock
+async def test_cache_hit_calls_http_exactly_once():
+    """Two calls for the same drug name → only one round-trip to DailyMed."""
+    respx.get(SEARCH_URL).mock(
+        return_value=httpx.Response(200, json=MOCK_SEARCH_RESPONSE)
+    )
+    respx.get(SPL_URL).mock(return_value=httpx.Response(200, text=MOCK_SPL_XML))
+
+    first = await fetch_leaflet_sections("lisinopril")
+    second = await fetch_leaflet_sections("lisinopril")
+
+    assert first == second
+    # search + xml = 2 calls total; the second fetch_leaflet_sections call is served from cache
+    assert respx.calls.call_count == 2
+
+
+@respx.mock
+async def test_expired_cache_calls_http_again():
+    """An entry past its TTL is evicted and the API is called again."""
+    respx.get(SEARCH_URL).mock(
+        return_value=httpx.Response(200, json=MOCK_SEARCH_RESPONSE)
+    )
+    respx.get(SPL_URL).mock(return_value=httpx.Response(200, text=MOCK_SPL_XML))
+
+    with patch("app.services.dailymed.time.time", return_value=0.0):
+        await fetch_leaflet_sections("lisinopril")
+
+    past_ttl = float(settings.dailymed_cache_ttl_seconds + 1)
+    with patch("app.services.dailymed.time.time", return_value=past_ttl):
+        await fetch_leaflet_sections("lisinopril")
+
+    # 2 HTTP calls per fetch × 2 fetches = 4
+    assert respx.calls.call_count == 4
+
+
+@respx.mock
+async def test_clear_dailymed_cache_resets_state():
+    """After clearing the cache, the next call hits the API again."""
+    respx.get(SEARCH_URL).mock(
+        return_value=httpx.Response(200, json=MOCK_SEARCH_RESPONSE)
+    )
+    respx.get(SPL_URL).mock(return_value=httpx.Response(200, text=MOCK_SPL_XML))
+
+    await fetch_leaflet_sections("lisinopril")
+    clear_dailymed_cache()
+    await fetch_leaflet_sections("lisinopril")
+
+    assert respx.calls.call_count == 4
