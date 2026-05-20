@@ -8,6 +8,7 @@ import app.services.llm_client as llm_module
 from app.services.llm_client import (
     SYSTEM_PROMPT,
     _build_prompt,
+    call_llm,
     generate,
     generate_stream,
 )
@@ -391,3 +392,44 @@ async def test_cerebras_retries_on_503_then_succeeds(mock_client_cls, mock_setti
     result = await generate("ctx", "q")
     assert result == "Retry succeeded."
     assert mock_http.post.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# call_llm — generic communication layer
+# ---------------------------------------------------------------------------
+
+
+@patch("app.services.llm_client.settings")
+@patch("app.services.llm_client.AsyncGroq")
+async def test_call_llm_uses_given_system_prompt(mock_groq_cls, mock_settings):
+    mock_settings.llm_provider = "groq"
+    mock_settings.groq_api_key = "fake-key"
+
+    mock_client = _mock_groq_client("extracted result")
+    mock_groq_cls.return_value = mock_client
+
+    custom_prompt = "You are an extraction tool."
+    result = await call_llm(custom_prompt, "some user text")
+
+    assert result == "extracted result"
+    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+    messages = call_kwargs["messages"]
+    assert messages[0]["role"] == "system"
+    assert messages[0]["content"] == custom_prompt
+    assert messages[1]["role"] == "user"
+    assert messages[1]["content"] == "some user text"
+
+
+@patch("app.services.llm_client.settings")
+@patch("app.services.llm_client.AsyncGroq")
+async def test_call_llm_passes_temperature(mock_groq_cls, mock_settings):
+    mock_settings.llm_provider = "groq"
+    mock_settings.groq_api_key = "fake-key"
+
+    mock_client = _mock_groq_client("ok")
+    mock_groq_cls.return_value = mock_client
+
+    await call_llm("sys", "user msg", temperature=0.7)
+
+    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+    assert call_kwargs["temperature"] == 0.7
