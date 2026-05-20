@@ -11,6 +11,26 @@ logger = logging.getLogger(__name__)
 # Matches optional ```json ... ``` or ``` ... ``` fences that some LLMs add.
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 
+_MAX_TEXT_LENGTH = 8000
+
+# Patterns that indicate prompt-injection attempts — matched per line, case-insensitive.
+_INJECTION_PATTERNS = re.compile(
+    r"ignore|forget|system:|new instruction|<\||^\[INST\]",
+    re.IGNORECASE,
+)
+
+
+def sanitize_prescription_text(text: str) -> str:
+    """Remove prompt-injection-like lines and truncate to _MAX_TEXT_LENGTH chars."""
+    clean_lines = []
+    for line in text.splitlines():
+        if _INJECTION_PATTERNS.search(line):
+            logger.warning("Sanitizer removed suspicious line: %r", line)
+        else:
+            clean_lines.append(line)
+    sanitized = "\n".join(clean_lines)
+    return sanitized[:_MAX_TEXT_LENGTH]
+
 
 def _strip_markdown(text: str) -> str:
     """Remove markdown code fences if the LLM wrapped its JSON response in them."""
@@ -30,8 +50,10 @@ async def parse_prescription(text: str) -> list[PrescriptionEntry]:
 
     Returns an empty list only when no drugs can be found by either method.
     """
+    safe_text = sanitize_prescription_text(text)
+
     try:
-        raw_json = await extract_medications(text)
+        raw_json = await extract_medications(safe_text)
         logger.debug("LLM extraction raw response: %s", raw_json[:200])
         clean_json = _strip_markdown(raw_json)
         items: list[dict] = json.loads(clean_json)
@@ -65,5 +87,5 @@ async def parse_prescription(text: str) -> list[PrescriptionEntry]:
         )
 
     # Fallback: regex/spaCy pipeline (drug names only, no structured fields)
-    names = extract_drug_names(text)
+    names = extract_drug_names(safe_text)
     return [PrescriptionEntry(drug_name=name) for name in names]
