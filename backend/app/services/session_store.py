@@ -1,82 +1,118 @@
+import json
 import logging
 import time
-from dataclasses import dataclass, field
+from typing import Any
+
+import redis.asyncio as aioredis
 
 from app.models.schemas import PrescriptionEntry
 
 logger = logging.getLogger(__name__)
 
-
-@dataclass
-class SessionData:
-    prescription: str
-    created_at: float
-    drugs_found: list[str] = field(default_factory=list)
-    missing_leaflets: list[str] = field(default_factory=list)
-    prescription_entries: list[PrescriptionEntry] = field(default_factory=list)
+_redis: aioredis.Redis | None = None
 
 
-# session_id → SessionData
-_sessions: dict[str, SessionData] = {}
+def _key(session_id: str) -> str:
+    return f"session:{session_id}"
 
 
-def save_prescription(session_id: str, text: str) -> None:
-    _sessions[session_id] = SessionData(prescription=text, created_at=time.monotonic())
+def _get_redis() -> aioredis.Redis:
+    if _redis is None:
+        raise RuntimeError("Redis not initialised — call init_redis() first")
+    return _redis
 
 
-def save_upload_result(
+async def init_redis(url: str) -> None:
+    global _redis
+    client: aioredis.Redis = aioredis.from_url(url, decode_responses=True)
+    await client.ping()  # fail fast if unreachable
+    _redis = client
+    logger.info("Redis connected: %s", url)
+
+
+async def close_redis() -> None:
+    global _redis
+    if _redis is not None:
+        await _redis.aclose()
+        _redis = None
+
+
+# ── Low-level generic interface ──────────────────────────────────────────────
+
+async def create_session(session_id: str) -> None:
+    from app.config import settings
+
+    r = _get_redis()
+    key = _key(session_id)
+    await r.hset(key, "created_at", json.dumps(time.time()))
+    await r.expire(key, settings.session_ttl_seconds)
+
+
+async def set_session_data(session_id: str, field: str, value: Any) -> None:
+    from app.config import settings
+
+    r = _get_redis()
+    key = _key(session_id)
+    await r.hset(key, field, json.dumps(value))
+    await r.expire(key, settings.session_ttl_seconds)
+
+
+async def get_session_data(session_id: str, field: str) -> Any | None:
+    r = _get_redis()
+    raw = await r.hget(_key(session_id), field)
+    if raw is None:
+        return None
+    return json.loads(raw)
+
+
+async def session_exists(session_id: str) -> bool:
+    r = _get_redis()
+    return bool(await r.exists(_key(session_id)))
+
+
+async def delete_session(session_id: str) -> None:
+    from app.services.vector_store import delete_session as vs_delete
+
+    r = _get_redis()
+    await r.delete(_key(session_id))
+    vs_delete(session_id)
+
+
+# ── High-level domain wrappers (preserves existing call-sites) ────────────────
+
+async def save_prescription(session_id: str, text: str) -> None:
+    await set_session_data(session_id, "prescription", text)
+
+
+async def get_prescription(session_id: str) -> str | None:
+    return await get_session_data(session_id, "prescription")
+
+
+async def save_prescription_entries(
+    session_id: str, entries: list[PrescriptionEntry]
+) -> None:
+    await set_session_data(
+        session_id, "prescription_entries", [e.model_dump() for e in entries]
+    )
+
+
+async def get_prescription_entries(session_id: str) -> list[PrescriptionEntry]:
+    raw = await get_session_data(session_id, "prescription_entries")
+    if raw is None:
+        return []
+    return [PrescriptionEntry(**e) for e in raw]
+
+
+async def save_upload_result(
     session_id: str,
     drugs_found: list[str],
     missing_leaflets: list[str],
 ) -> None:
-    """Record which drugs were successfully indexed and which had no leaflet."""
-    entry = _sessions.get(session_id)
-    if entry is not None:
-        entry.drugs_found = drugs_found
-        entry.missing_leaflets = missing_leaflets
+    await set_session_data(session_id, "drugs_found", drugs_found)
+    await set_session_data(session_id, "missing_leaflets", missing_leaflets)
 
 
-def get_prescription(session_id: str) -> str | None:
-    entry = _sessions.get(session_id)
-    return entry.prescription if entry is not None else None
-
-
-def save_prescription_entries(
-    session_id: str, entries: list[PrescriptionEntry]
-) -> None:
-    """Store structured prescription entries for *session_id*."""
-    entry = _sessions.get(session_id)
-    if entry is not None:
-        entry.prescription_entries = entries
-
-
-def get_prescription_entries(session_id: str) -> list[PrescriptionEntry]:
-    """Return the structured prescription entries for *session_id*, or []."""
-    entry = _sessions.get(session_id)
-    return entry.prescription_entries if entry is not None else []
-
-
-def get_upload_result(
-    session_id: str,
-) -> tuple[list[str], list[str]]:
-    """Return (drugs_found, missing_leaflets) for *session_id*, or two empty lists."""
-    entry = _sessions.get(session_id)
-    if entry is None:
-        return [], []
-    return entry.drugs_found, entry.missing_leaflets
-
-
-def expire_sessions(ttl_seconds: float) -> list[str]:
-    """Evict sessions older than *ttl_seconds*.
-
-    Returns the list of evicted session IDs so callers can also clean up
-    any associated external state (e.g. ChromaDB documents).
-    """
-    now = time.monotonic()
-    expired = [
-        sid for sid, data in _sessions.items() if now - data.created_at > ttl_seconds
-    ]
-    for sid in expired:
-        del _sessions[sid]
-        logger.info("Session expired and removed: %s", sid)
-    return expired
+async def get_upload_result(session_id: str) -> tuple[list[str], list[str]]:
+    drugs_found = await get_session_data(session_id, "drugs_found") or []
+    missing_leaflets = await get_session_data(session_id, "missing_leaflets") or []
+    return drugs_found, missing_leaflets

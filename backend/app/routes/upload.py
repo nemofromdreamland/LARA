@@ -90,8 +90,8 @@ async def upload(
             status_code=422, detail="No drug names found in prescription."
         )
 
-    save_prescription(session_id, text)
-    save_prescription_entries(session_id, entries)
+    await save_prescription(session_id, text)
+    await save_prescription_entries(session_id, entries)
 
     # Derive clean drug names for DailyMed lookup.
     drug_names = [e.drug_name for e in entries]
@@ -125,7 +125,7 @@ async def upload(
         await store(chunks, embeddings, metas)
         stored_drugs.append(drug)
 
-    save_upload_result(session_id, stored_drugs, missing_drugs)
+    await save_upload_result(session_id, stored_drugs, missing_drugs)
 
     logger.info(
         "drugs found: %d stored, %d missing", len(stored_drugs), len(missing_drugs),

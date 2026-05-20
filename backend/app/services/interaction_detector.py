@@ -55,7 +55,7 @@ async def detect_interactions(
     One flag per (drug_a, drug_b) pair — the excerpt from the highest-quality
     chunk (longest containing the term) is kept.
     """
-    drugs_found, _ = get_upload_result(session_id)
+    drugs_found, _ = await get_upload_result(session_id)
 
     if len(drugs_found) < 2:
         return []

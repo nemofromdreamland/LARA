@@ -20,7 +20,7 @@ async def interactions(body: InteractionsRequest) -> InteractionsResponse:
     Checks every (drug_a, drug_b) pair — where drug_a's official
     Drug Interactions leaflet section mentions drug_b by name.
     """
-    drugs_found, _ = get_upload_result(body.session_id)
+    drugs_found, _ = await get_upload_result(body.session_id)
     n = len(drugs_found)
     pairs_checked = math.comb(n, 2)  # n-choose-2 unordered pairs
 

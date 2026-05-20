@@ -88,7 +88,7 @@ async def answer(session_id: str, question: str) -> ChatResponse:
     )
 
     if not chunks:
-        drugs_found, missing = get_upload_result(session_id)
+        drugs_found, missing = await get_upload_result(session_id)
         parts: list[str] = [
             "This information is not available in the provided leaflets."
         ]
@@ -99,7 +99,7 @@ async def answer(session_id: str, question: str) -> ChatResponse:
         return ChatResponse(answer=" ".join(parts), sources=[])
 
     context_parts: list[str] = []
-    entries = get_prescription_entries(session_id)
+    entries = await get_prescription_entries(session_id)
     prescription_text = _format_prescription(entries) if entries else ""
     if prescription_text:
         context_parts.append(prescription_text)
@@ -144,7 +144,7 @@ async def answer_stream(session_id: str, question: str) -> AsyncGenerator[str, N
     )
 
     if not chunks:
-        drugs_found, missing = get_upload_result(session_id)
+        drugs_found, missing = await get_upload_result(session_id)
         parts: list[str] = [
             "This information is not available in the provided leaflets."
         ]
@@ -158,7 +158,7 @@ async def answer_stream(session_id: str, question: str) -> AsyncGenerator[str, N
         return
 
     context_parts: list[str] = []
-    entries = get_prescription_entries(session_id)
+    entries = await get_prescription_entries(session_id)
     prescription_text = _format_prescription(entries) if entries else ""
     if prescription_text:
         context_parts.append(prescription_text)
