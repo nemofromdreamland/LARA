@@ -1,10 +1,10 @@
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from app.models.schemas import InteractionFlag
 
 
 @patch("app.routes.interactions.get_upload_result")
-@patch("app.routes.interactions.detect_interactions")
+@patch("app.routes.interactions.detect_interactions", new_callable=AsyncMock)
 def test_interactions_returns_flags(mock_detect, mock_upload, client):
     mock_upload.return_value = (["warfarin", "aspirin"], [])
     mock_detect.return_value = [
@@ -26,7 +26,7 @@ def test_interactions_returns_flags(mock_detect, mock_upload, client):
 
 
 @patch("app.routes.interactions.get_upload_result")
-@patch("app.routes.interactions.detect_interactions")
+@patch("app.routes.interactions.detect_interactions", new_callable=AsyncMock)
 def test_interactions_no_flags_when_no_overlap(mock_detect, mock_upload, client):
     mock_upload.return_value = (["lisinopril", "metformin"], [])
     mock_detect.return_value = []
@@ -39,7 +39,7 @@ def test_interactions_no_flags_when_no_overlap(mock_detect, mock_upload, client)
 
 
 @patch("app.routes.interactions.get_upload_result")
-@patch("app.routes.interactions.detect_interactions")
+@patch("app.routes.interactions.detect_interactions", new_callable=AsyncMock)
 def test_interactions_single_drug_zero_pairs(mock_detect, mock_upload, client):
     mock_upload.return_value = (["aspirin"], [])
     mock_detect.return_value = []

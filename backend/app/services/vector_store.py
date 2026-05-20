@@ -4,6 +4,7 @@ import chromadb
 from chromadb import ClientAPI
 
 from app.config import settings
+from app.utils import run_sync
 
 _COLLECTION_NAME = "leaflets"
 _client: ClientAPI | None = None
@@ -24,7 +25,7 @@ def _get_collection(client: ClientAPI | None = None) -> chromadb.Collection:
     )
 
 
-def store(
+async def store(
     chunks: list[str],
     embeddings: list[list[float]],
     metadatas: list[dict],
@@ -37,7 +38,8 @@ def store(
     """
     collection = _get_collection(client)
     ids = [str(uuid4()) for _ in chunks]
-    collection.add(
+    await run_sync(
+        collection.add,
         ids=ids,
         embeddings=embeddings,
         documents=chunks,
@@ -61,7 +63,7 @@ def delete_session(
     return len(ids)
 
 
-def get_by_section(
+async def get_by_section(
     session_id: str,
     section: str,
     drug_name: str | None = None,
@@ -82,7 +84,9 @@ def get_by_section(
     }
     if drug_name is not None:
         where["$and"].append({"drug_name": drug_name})
-    results = collection.get(where=where, include=["documents", "metadatas"])
+    results = await run_sync(
+        collection.get, where=where, include=["documents", "metadatas"]
+    )
     return [
         {
             "text": doc,
@@ -93,7 +97,7 @@ def get_by_section(
     ]
 
 
-def retrieve(
+async def retrieve(
     query_embedding: list[float],
     session_id: str,
     top_k: int = 5,
@@ -104,7 +108,8 @@ def retrieve(
     Returns a list of dicts with keys: text, drug_name, section.
     """
     collection = _get_collection(client)
-    results = collection.query(
+    results = await run_sync(
+        collection.query,
         query_embeddings=[query_embedding],
         n_results=top_k,
         where={"session_id": session_id},

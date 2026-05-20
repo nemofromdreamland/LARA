@@ -40,7 +40,7 @@ async def answer(session_id: str, question: str) -> ChatResponse:
     5. Return ChatResponse with answer + deduplicated source list.
     """
     query_embedding = (await embed([question]))[0]
-    raw_chunks = retrieve(query_embedding, session_id, top_k=5)
+    raw_chunks = await retrieve(query_embedding, session_id, top_k=5)
     chunks = [c for c in raw_chunks if c["distance"] < _DISTANCE_THRESHOLD]
 
     if not chunks:
@@ -84,7 +84,7 @@ async def answer_stream(session_id: str, question: str) -> AsyncGenerator[str, N
       - A final ``[DONE]`` line.
     """
     query_embedding = (await embed([question]))[0]
-    raw_chunks = retrieve(query_embedding, session_id, top_k=5)
+    raw_chunks = await retrieve(query_embedding, session_id, top_k=5)
     chunks = [c for c in raw_chunks if c["distance"] < _DISTANCE_THRESHOLD]
 
     if not chunks:

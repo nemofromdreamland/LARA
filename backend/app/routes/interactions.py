@@ -24,7 +24,7 @@ async def interactions(body: InteractionsRequest) -> InteractionsResponse:
     n = len(drugs_found)
     pairs_checked = math.comb(n, 2)  # n-choose-2 unordered pairs
 
-    flags: list[InteractionFlag] = detect_interactions(body.session_id)
+    flags: list[InteractionFlag] = await detect_interactions(body.session_id)
 
     return InteractionsResponse(
         session_id=body.session_id,

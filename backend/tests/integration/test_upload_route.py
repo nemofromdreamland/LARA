@@ -55,7 +55,7 @@ def pdf_with_drug() -> bytes:
 @patch("app.routes.upload.parse_prescription", new_callable=AsyncMock)
 @patch("app.routes.upload.fetch_leaflet_sections", new_callable=AsyncMock)
 @patch("app.routes.upload.embed", new_callable=AsyncMock)
-@patch("app.routes.upload.store")
+@patch("app.routes.upload.store", new_callable=AsyncMock)
 def test_upload_success(
     mock_store, mock_embed, mock_fetch, mock_parse, client, pdf_with_drug
 ):
@@ -80,7 +80,7 @@ def test_upload_success(
 @patch("app.routes.upload.parse_prescription", new_callable=AsyncMock)
 @patch("app.routes.upload.fetch_leaflet_sections", new_callable=AsyncMock)
 @patch("app.routes.upload.embed", new_callable=AsyncMock)
-@patch("app.routes.upload.store")
+@patch("app.routes.upload.store", new_callable=AsyncMock)
 def test_upload_unknown_drug_returns_no_leaflets(
     mock_store, mock_embed, mock_fetch, mock_parse, client
 ):

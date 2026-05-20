@@ -41,7 +41,7 @@ def _word_in_text(word: str, text: str) -> bool:
     return bool(pattern.search(text))
 
 
-def detect_interactions(
+async def detect_interactions(
     session_id: str,
     client=None,
 ) -> list[InteractionFlag]:
@@ -65,7 +65,7 @@ def detect_interactions(
     flags: list[InteractionFlag] = []
 
     for drug_a in drugs_found:
-        chunks = get_by_section(
+        chunks = await get_by_section(
             session_id, "drug_interactions", drug_name=drug_a, client=client
         )
         for chunk in chunks:

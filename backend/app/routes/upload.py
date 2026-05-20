@@ -15,6 +15,7 @@ from app.services.session_store import (
     save_upload_result,
 )
 from app.services.vector_store import store
+from app.utils import run_sync
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ async def upload(
         )
 
     try:
-        text = extract_text(raw_bytes)
+        text = await run_sync(extract_text, raw_bytes)
     except PDFExtractionError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
@@ -105,7 +106,7 @@ async def upload(
             missing_drugs.append(drug)
             continue
         embeddings = await embed(chunks)
-        store(chunks, embeddings, metas)
+        await store(chunks, embeddings, metas)
         stored_drugs.append(drug)
 
     save_upload_result(session_id, stored_drugs, missing_drugs)

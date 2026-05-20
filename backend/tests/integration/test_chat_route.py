@@ -66,7 +66,7 @@ def test_chat_missing_fields_returns_422(client: TestClient):
     assert response.status_code == 422
 
 
-@patch("app.services.rag_pipeline.retrieve")
+@patch("app.services.rag_pipeline.retrieve", new_callable=AsyncMock)
 @patch("app.services.rag_pipeline.embed", new_callable=AsyncMock)
 @patch("app.services.rag_pipeline.generate", new_callable=AsyncMock)
 def test_rag_pipeline_integration(
@@ -97,7 +97,7 @@ def test_rag_pipeline_integration(
     assert data["sources"][0]["drug_name"] == "lisinopril"
 
 
-@patch("app.services.rag_pipeline.retrieve")
+@patch("app.services.rag_pipeline.retrieve", new_callable=AsyncMock)
 @patch("app.services.rag_pipeline.embed", new_callable=AsyncMock)
 async def test_rag_pipeline_no_chunks_skips_llm(
     mock_embed, mock_retrieve, client: TestClient

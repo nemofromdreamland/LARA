@@ -25,10 +25,10 @@ def chroma_client():
     return chromadb.EphemeralClient()
 
 
-def _store_interaction_chunk(
+async def _store_interaction_chunk(
     session_id: str, drug_name: str, text: str, client
 ) -> None:
-    store(
+    await store(
         [text],
         [_make_embedding()],
         [
@@ -98,15 +98,15 @@ def test_extract_excerpt_term_not_found_returns_start():
 # ---------------------------------------------------------------------------
 
 
-def test_detect_interactions_flags_cross_mention(chroma_client):
+async def test_detect_interactions_flags_cross_mention(chroma_client):
     sid = "sess-int-1"
-    _store_interaction_chunk(
+    await _store_interaction_chunk(
         sid,
         "warfarin",
         "Concurrent use of aspirin with warfarin increases bleeding risk.",
         chroma_client,
     )
-    _store_interaction_chunk(
+    await _store_interaction_chunk(
         sid,
         "aspirin",
         "No specific interaction data for warfarin found in this section.",
@@ -117,15 +117,15 @@ def test_detect_interactions_flags_cross_mention(chroma_client):
         "app.services.interaction_detector.get_upload_result",
         return_value=(["warfarin", "aspirin"], []),
     ):
-        flags = detect_interactions(sid, client=chroma_client)
+        flags = await detect_interactions(sid, client=chroma_client)
 
     assert len(flags) >= 1
     assert any(f.drug_a == "warfarin" and f.drug_b == "aspirin" for f in flags)
 
 
-def test_detect_interactions_returns_interaction_flag_objects(chroma_client):
+async def test_detect_interactions_returns_interaction_flag_objects(chroma_client):
     sid = "sess-int-2"
-    _store_interaction_chunk(
+    await _store_interaction_chunk(
         sid,
         "lisinopril",
         "Avoid concurrent use with metformin in renal impairment.",
@@ -136,33 +136,33 @@ def test_detect_interactions_returns_interaction_flag_objects(chroma_client):
         "app.services.interaction_detector.get_upload_result",
         return_value=(["lisinopril", "metformin"], []),
     ):
-        flags = detect_interactions(sid, client=chroma_client)
+        flags = await detect_interactions(sid, client=chroma_client)
 
     assert all(isinstance(f, InteractionFlag) for f in flags)
     assert all(f.excerpt for f in flags)
 
 
-def test_detect_interactions_single_drug_returns_empty(chroma_client):
+async def test_detect_interactions_single_drug_returns_empty(chroma_client):
     with patch(
         "app.services.interaction_detector.get_upload_result",
         return_value=(["aspirin"], []),
     ):
-        flags = detect_interactions("any-session", client=chroma_client)
+        flags = await detect_interactions("any-session", client=chroma_client)
     assert flags == []
 
 
-def test_detect_interactions_no_drugs_returns_empty(chroma_client):
+async def test_detect_interactions_no_drugs_returns_empty(chroma_client):
     with patch(
         "app.services.interaction_detector.get_upload_result",
         return_value=([], []),
     ):
-        flags = detect_interactions("any-session", client=chroma_client)
+        flags = await detect_interactions("any-session", client=chroma_client)
     assert flags == []
 
 
-def test_detect_interactions_no_cross_mention_returns_empty(chroma_client):
+async def test_detect_interactions_no_cross_mention_returns_empty(chroma_client):
     sid = "sess-int-3"
-    _store_interaction_chunk(
+    await _store_interaction_chunk(
         sid,
         "lisinopril",
         "May interact with NSAIDs in general.",  # no specific drug name
@@ -173,17 +173,17 @@ def test_detect_interactions_no_cross_mention_returns_empty(chroma_client):
         "app.services.interaction_detector.get_upload_result",
         return_value=(["lisinopril", "metformin"], []),
     ):
-        flags = detect_interactions(sid, client=chroma_client)
+        flags = await detect_interactions(sid, client=chroma_client)
     assert flags == []
 
 
-def test_detect_interactions_deduplicates_pair(chroma_client):
+async def test_detect_interactions_deduplicates_pair(chroma_client):
     """Two chunks both mentioning drug_b should produce only one flag per pair."""
     sid = "sess-int-4"
-    _store_interaction_chunk(
+    await _store_interaction_chunk(
         sid, "warfarin", "First mention of aspirin here.", chroma_client
     )
-    _store_interaction_chunk(
+    await _store_interaction_chunk(
         sid, "warfarin", "Second mention: aspirin may increase INR.", chroma_client
     )
 
@@ -191,7 +191,7 @@ def test_detect_interactions_deduplicates_pair(chroma_client):
         "app.services.interaction_detector.get_upload_result",
         return_value=(["warfarin", "aspirin"], []),
     ):
-        flags = detect_interactions(sid, client=chroma_client)
+        flags = await detect_interactions(sid, client=chroma_client)
 
     warfarin_aspirin = [
         f for f in flags if f.drug_a == "warfarin" and f.drug_b == "aspirin"
