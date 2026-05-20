@@ -1,16 +1,45 @@
 import json
+import logging
 from collections.abc import AsyncGenerator
 
+from app.config import settings
 from app.models.schemas import ChatResponse, PrescriptionEntry, Source
 from app.services.embedder import embed
 from app.services.llm_client import generate, generate_stream
 from app.services.session_store import get_prescription_entries, get_upload_result
 from app.services.vector_store import retrieve
 
+logger = logging.getLogger(__name__)
+
 # Cosine distance threshold for retrieval quality filtering.
 # Chroma's HNSW uses cosine distance (range 0–2); 0 = identical, 2 = opposite.
 # Chunks above this threshold are semantically too distant to be useful context.
 _DISTANCE_THRESHOLD = 0.45
+
+
+def trim_to_budget(chunks_with_scores: list, max_chars: int) -> list:
+    """Return the highest-relevance chunks that fit within *max_chars*.
+
+    Sorts ascending by distance (most relevant first), then greedily accumulates
+    chunks until the next one would overflow the budget.  The prescription summary
+    must be counted separately by the caller before invoking this function.
+    """
+    sorted_chunks = sorted(chunks_with_scores, key=lambda c: c["distance"])
+    kept: list = []
+    total = 0
+    for chunk in sorted_chunks:
+        chunk_len = len(chunk["text"])
+        if total + chunk_len > max_chars:
+            break
+        kept.append(chunk)
+        total += chunk_len
+
+    trimmed = len(sorted_chunks) - len(kept)
+    if trimmed:
+        logger.info("trim_to_budget: dropped %d chunk(s), %d chars kept", trimmed, total)
+    else:
+        logger.info("trim_to_budget: all %d chunk(s) fit, %d chars kept", len(kept), total)
+    return kept
 
 
 def _format_prescription(entries: list[PrescriptionEntry]) -> str:
@@ -56,8 +85,13 @@ async def answer(session_id: str, question: str) -> ChatResponse:
 
     context_parts: list[str] = []
     entries = get_prescription_entries(session_id)
-    if entries:
-        context_parts.append(_format_prescription(entries))
+    prescription_text = _format_prescription(entries) if entries else ""
+    if prescription_text:
+        context_parts.append(prescription_text)
+
+    remaining_budget = settings.max_context_chars - len(prescription_text)
+    chunks = trim_to_budget(chunks, max_chars=max(0, remaining_budget))
+
     context_parts.extend(
         f"[{c['drug_name']} — {c['section']}]\n{c['text']}" for c in chunks
     )
@@ -103,8 +137,13 @@ async def answer_stream(session_id: str, question: str) -> AsyncGenerator[str, N
 
     context_parts: list[str] = []
     entries = get_prescription_entries(session_id)
-    if entries:
-        context_parts.append(_format_prescription(entries))
+    prescription_text = _format_prescription(entries) if entries else ""
+    if prescription_text:
+        context_parts.append(prescription_text)
+
+    remaining_budget = settings.max_context_chars - len(prescription_text)
+    chunks = trim_to_budget(chunks, max_chars=max(0, remaining_budget))
+
     context_parts.extend(
         f"[{c['drug_name']} — {c['section']}]\n{c['text']}" for c in chunks
     )
