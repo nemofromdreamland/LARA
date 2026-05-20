@@ -19,7 +19,7 @@ def test_session_response_has_request_id_header(client: TestClient):
 
 def test_health_response_has_request_id_header(client: TestClient):
     response = client.get("/health")
-    assert response.status_code == 200
+    assert response.status_code in (200, 503)
     assert "x-request-id" in response.headers
 
 

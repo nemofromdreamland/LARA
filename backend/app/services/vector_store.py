@@ -25,6 +25,15 @@ def _get_collection(client: ClientAPI | None = None) -> chromadb.Collection:
     )
 
 
+async def ping() -> bool:
+    try:
+        collection = _get_collection()
+        await run_sync(collection.count)
+        return True
+    except Exception:
+        return False
+
+
 async def store(
     chunks: list[str],
     embeddings: list[list[float]],

@@ -5,8 +5,12 @@ from fastapi.testclient import TestClient
 
 def test_health(client: TestClient):
     response = client.get("/health")
-    assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.status_code in (200, 503)
+    data = response.json()
+    assert data["status"] in ("ok", "degraded")
+    assert "components" in data
+    for comp in data["components"].values():
+        assert comp["status"] in ("ok", "degraded", "unavailable")
 
 
 def test_create_session(client: TestClient):

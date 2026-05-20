@@ -7,6 +7,10 @@ _MODEL_NAME = "NeuML/pubmedbert-base-embeddings"
 _model: SentenceTransformer | None = None
 
 
+def is_model_loaded() -> bool:
+    return _model is not None
+
+
 def _get_model() -> SentenceTransformer:
     global _model
     if _model is None:

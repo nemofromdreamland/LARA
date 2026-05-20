@@ -17,8 +17,14 @@ class SessionResponse(BaseModel):
     session_id: str
 
 
+class ComponentHealth(BaseModel):
+    status: Literal["ok", "degraded", "unavailable"]
+    detail: str | None = None
+
+
 class HealthResponse(BaseModel):
-    status: str
+    status: Literal["ok", "degraded"]
+    components: dict[str, "ComponentHealth"]
 
 
 class UploadResponse(BaseModel):
