@@ -1,8 +1,10 @@
 from collections.abc import AsyncGenerator
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
+from app.config import settings
+from app.limiter import limiter
 from app.models.schemas import ChatRequest, ChatResponse
 from app.services.rag_pipeline import answer, answer_stream
 
@@ -10,12 +12,14 @@ router = APIRouter()
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(body: ChatRequest) -> ChatResponse:
+@limiter.limit(settings.chat_rate_limit)
+async def chat(request: Request, body: ChatRequest) -> ChatResponse:
     return await answer(body.session_id, body.question)
 
 
 @router.post("/chat/stream")
-async def chat_stream(body: ChatRequest) -> StreamingResponse:
+@limiter.limit(settings.chat_rate_limit)
+async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
     """Stream the RAG answer as Server-Sent Events.
 
     Each SSE event is one of:

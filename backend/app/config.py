@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     expiry_interval_seconds: int = 600  # run eviction every 10 minutes
     max_context_chars: int = 12_000
     dailymed_cache_ttl_seconds: int = 86_400
+    upload_rate_limit: str = "5/minute"
+    chat_rate_limit: str = "20/minute"
 
     @model_validator(mode="after")
     def _check_api_key(self) -> "Settings":

@@ -25,6 +25,9 @@ export async function uploadPrescription(
   form.append('session_id', sessionId)
   form.append('file', file)
   const res = await fetch(`${BASE}/upload`, { method: 'POST', body: form })
+  if (res.status === 429) {
+    throw new Error("You're sending requests too quickly. Please wait a moment and try again.")
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: 'Upload failed' }))
     throw new Error(err.detail ?? 'Upload failed')
@@ -54,6 +57,9 @@ export async function* streamQuestion(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session_id: sessionId, question }),
   })
+  if (res.status === 429) {
+    throw new Error("You're sending requests too quickly. Please wait a moment and try again.")
+  }
   if (!res.ok) throw new Error('Stream request failed')
 
   const reader = res.body!.getReader()

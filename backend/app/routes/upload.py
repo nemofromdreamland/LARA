@@ -1,8 +1,10 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
+from app.config import settings
+from app.limiter import limiter
 from app.models.schemas import UploadResponse
 from app.services.chunker import chunk_text
 from app.services.dailymed import fetch_leaflet_sections
@@ -48,7 +50,9 @@ async def _process_drug(
 
 
 @router.post("/upload", response_model=UploadResponse)
+@limiter.limit(settings.upload_rate_limit)
 async def upload(
+    request: Request,
     session_id: str = Form(...),
     file: UploadFile = File(...),
 ) -> UploadResponse:
