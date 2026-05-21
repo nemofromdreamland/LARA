@@ -71,9 +71,7 @@ async def upload(
             status_code=400, detail="File does not appear to be a valid PDF."
         )
 
-    logger.info(
-        "upload started for session %s", session_id, extra={"request_id": rid}
-    )
+    logger.info("upload started for session %s", session_id, extra={"request_id": rid})
 
     try:
         text = await run_sync(extract_text, raw_bytes)
@@ -108,7 +106,9 @@ async def upload(
     for drug, result in zip(drug_names, results):
         if isinstance(result, Exception):
             logger.warning(
-                "DailyMed fetch failed for %s: %s", drug, result,
+                "DailyMed fetch failed for %s: %s",
+                drug,
+                result,
                 extra={"request_id": rid},
             )
             missing_drugs.append(drug)
@@ -116,7 +116,8 @@ async def upload(
         _, chunks, metas = result
         if not chunks:
             logger.warning(
-                "No DailyMed leaflet found for drug: %s", drug,
+                "No DailyMed leaflet found for drug: %s",
+                drug,
                 extra={"request_id": rid},
             )
             missing_drugs.append(drug)
@@ -128,7 +129,9 @@ async def upload(
     await save_upload_result(session_id, stored_drugs, missing_drugs)
 
     logger.info(
-        "drugs found: %d stored, %d missing", len(stored_drugs), len(missing_drugs),
+        "drugs found: %d stored, %d missing",
+        len(stored_drugs),
+        len(missing_drugs),
         extra={"request_id": rid},
     )
 

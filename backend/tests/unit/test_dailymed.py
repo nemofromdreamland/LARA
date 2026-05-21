@@ -22,6 +22,7 @@ def reset_cache():
     yield
     clear_dailymed_cache()
 
+
 DAILYMED_BASE = "https://dailymed.nlm.nih.gov/dailymed/services/v2"
 
 SEARCH_URL = f"{DAILYMED_BASE}/spls.json"
@@ -269,7 +270,7 @@ async def test_cache_hit_calls_http_exactly_once():
     second = await fetch_leaflet_sections("lisinopril")
 
     assert first == second
-    # search + xml = 2 calls total; the second fetch_leaflet_sections call is served from cache
+    # search + xml = 2 calls total; second call is served from cache
     assert respx.calls.call_count == 2
 
 

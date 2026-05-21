@@ -39,6 +39,7 @@ async def close_redis() -> None:
 
 # ── Low-level generic interface ──────────────────────────────────────────────
 
+
 async def create_session(session_id: str) -> None:
     from app.config import settings
 
@@ -79,6 +80,7 @@ async def delete_session(session_id: str) -> None:
 
 
 # ── High-level domain wrappers (preserves existing call-sites) ────────────────
+
 
 async def save_prescription(session_id: str, text: str) -> None:
     await set_session_data(session_id, "prescription", text)

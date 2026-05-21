@@ -32,6 +32,10 @@ async def health() -> JSONResponse:
     )
 
     components = {"chroma": chroma, "embedder": emb, "llm": llm}
-    overall: str = "ok" if all(c.status == "ok" for c in components.values()) else "degraded"
+    overall: str = (
+        "ok" if all(c.status == "ok" for c in components.values()) else "degraded"
+    )
     response = HealthResponse(status=overall, components=components)  # type: ignore[arg-type]
-    return JSONResponse(content=response.model_dump(), status_code=200 if overall == "ok" else 503)
+    return JSONResponse(
+        content=response.model_dump(), status_code=200 if overall == "ok" else 503
+    )

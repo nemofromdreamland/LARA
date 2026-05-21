@@ -39,12 +39,16 @@ def trim_to_budget(chunks_with_scores: list, max_chars: int) -> list:
     trimmed = len(sorted_chunks) - len(kept)
     if trimmed:
         logger.debug(
-            "trim_to_budget: dropped %d chunk(s), %d chars kept", trimmed, total,
+            "trim_to_budget: dropped %d chunk(s), %d chars kept",
+            trimmed,
+            total,
             extra={"request_id": rid},
         )
     else:
         logger.debug(
-            "trim_to_budget: all %d chunk(s) fit, %d chars kept", len(kept), total,
+            "trim_to_budget: all %d chunk(s) fit, %d chars kept",
+            len(kept),
+            total,
             extra={"request_id": rid},
         )
     return kept
@@ -83,7 +87,8 @@ async def answer(session_id: str, question: str) -> ChatResponse:
 
     logger.debug(
         "RAG retrieve: %d raw chunks, %d passed threshold",
-        len(raw_chunks), len(chunks),
+        len(raw_chunks),
+        len(chunks),
         extra={"request_id": rid},
     )
 
@@ -139,7 +144,8 @@ async def answer_stream(session_id: str, question: str) -> AsyncGenerator[str, N
 
     logger.debug(
         "RAG stream retrieve: %d raw chunks, %d passed threshold",
-        len(raw_chunks), len(chunks),
+        len(raw_chunks),
+        len(chunks),
         extra={"request_id": rid},
     )
 

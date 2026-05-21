@@ -5,7 +5,6 @@ import uuid
 
 from fastapi.testclient import TestClient
 
-
 # ---------------------------------------------------------------------------
 # X-Request-ID header presence tests
 # ---------------------------------------------------------------------------
@@ -61,7 +60,9 @@ def test_log_records_request_id_is_string(client: TestClient, caplog):
         client.post("/session")
 
     records_with_rid = [
-        r for r in caplog.records if getattr(r, "request_id", None) not in (None, "no-request")
+        r
+        for r in caplog.records
+        if getattr(r, "request_id", None) not in (None, "no-request")
     ]
     assert records_with_rid, "Expected at least one log record with a real request_id"
     for r in records_with_rid:

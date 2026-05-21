@@ -1,11 +1,11 @@
 """Unit tests for rag_pipeline.trim_to_budget."""
 
-import pytest
-
 from app.services.rag_pipeline import trim_to_budget
 
 
-def _chunk(text: str, distance: float, drug: str = "drugA", section: str = "dosage") -> dict:
+def _chunk(
+    text: str, distance: float, drug: str = "drugA", section: str = "dosage"
+) -> dict:
     return {"text": text, "distance": distance, "drug_name": drug, "section": section}
 
 
@@ -75,7 +75,7 @@ def test_overflow_preserves_most_relevant_order():
 
 
 def test_prescription_summary_counted_before_chunks():
-    """Simulate caller subtracting prescription length from budget before calling trim."""
+    """Caller subtracts prescription length from budget before calling trim."""
     prescription = "[Prescription]\n1. Aspirin\n   • Dosage: 100mg"
     prescription_len = len(prescription)
     max_context = 200
@@ -94,7 +94,7 @@ def test_prescription_summary_counted_before_chunks():
 
 
 def test_prescription_summary_present_in_assembled_context():
-    """Prescription text must appear in the context string regardless of chunk trimming."""
+    """Prescription text must appear in the context string regardless of trimming."""
     prescription = "[Prescription]\n1. Metformin\n   • Dosage: 500mg"
     chunks = [_chunk("chunk text", distance=0.1)]
     remaining = 10_000 - len(prescription)

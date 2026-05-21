@@ -29,7 +29,10 @@ def test_all_healthy(client: TestClient):
 
 def test_chroma_ping_raises(client: TestClient):
     with (
-        patch("app.services.vector_store.ping", AsyncMock(side_effect=Exception("connection refused"))),
+        patch(
+            "app.services.vector_store.ping",
+            AsyncMock(side_effect=Exception("connection refused")),
+        ),
         patch("app.services.embedder.is_model_loaded", return_value=True),
         patch("app.config.settings.groq_api_key", "sk-test"),
         patch("app.config.settings.cerebras_api_key", ""),

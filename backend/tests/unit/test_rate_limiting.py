@@ -1,4 +1,5 @@
 """Rate limiting tests for /upload and /chat endpoints."""
+
 import io
 from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, patch
@@ -77,7 +78,9 @@ def test_upload_allows_five_requests(
             data={"session_id": f"sess-{i}"},
             files={"file": ("rx.pdf", io.BytesIO(pdf), "application/pdf")},
         )
-        assert res.status_code == 200, f"Request {i + 1} unexpectedly blocked: {res.text}"
+        assert res.status_code == 200, (
+            f"Request {i + 1} unexpectedly blocked: {res.text}"
+        )
 
 
 @patch("app.routes.upload.parse_prescription", new_callable=AsyncMock)
@@ -160,7 +163,9 @@ def test_chat_allows_twenty_requests(mock_answer, client: TestClient):
             "/chat",
             json={"session_id": _SID, "question": f"Question {i}"},
         )
-        assert res.status_code == 200, f"Request {i + 1} unexpectedly blocked: {res.text}"
+        assert res.status_code == 200, (
+            f"Request {i + 1} unexpectedly blocked: {res.text}"
+        )
 
 
 @patch("app.routes.chat.answer", new_callable=AsyncMock)

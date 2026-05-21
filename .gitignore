@@ -28,3 +28,13 @@ CLAUDE.md
 frontend/dist/
 frontend/node_modules/
 frontend/*.tsbuildinfo
+
+# Redis
+dump.rdb
+appendonly.aof
+appendonlydir/
+redis-data/
+redis_data/
+.redis/
+*.rdb
+*.aof

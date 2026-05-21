@@ -14,7 +14,9 @@ logger = logging.getLogger(__name__)
 
 DAILYMED_BASE = "https://dailymed.nlm.nih.gov/dailymed/services/v2"
 
-_cache: dict[str, tuple[list, float]] = {}  # normalized_drug_name → (sections, timestamp)
+_cache: dict[
+    str, tuple[list, float]
+] = {}  # normalized_drug_name → (sections, timestamp)
 
 
 def _cache_get(drug_name: str) -> list | None:
@@ -30,6 +32,7 @@ def _cache_set(drug_name: str, sections: list) -> None:
 
 def clear_dailymed_cache() -> None:
     _cache.clear()
+
 
 # Matches trailing dosage info: "50 mg", "10mg", "0.5 mcg/ml", etc.
 _DOSAGE_RE = re.compile(r"\s+\d[\d.,]*\s*(?:mg|mcg|ml|g|iu|%|units?)\S*", re.IGNORECASE)
@@ -101,7 +104,8 @@ async def _fetch_set_id(drug_name: str, client: httpx.AsyncClient) -> str | None
     items = response.json().get("data", [])
     if not items:
         logger.warning(
-            "DailyMed: no SPL found for drug %r", drug_name,
+            "DailyMed: no SPL found for drug %r",
+            drug_name,
             extra={"request_id": get_request_id()},
         )
         return None

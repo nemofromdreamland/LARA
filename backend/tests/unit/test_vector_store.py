@@ -23,7 +23,9 @@ async def test_store_and_retrieve_basic(chroma_client):
 
     await store(chunks, embeddings, metadatas, client=chroma_client)
 
-    results = await retrieve(_make_embedding(0.1), "sess-1", top_k=1, client=chroma_client)
+    results = await retrieve(
+        _make_embedding(0.1), "sess-1", top_k=1, client=chroma_client
+    )
     assert len(results) == 1
     assert results[0]["text"] == chunks[0]
     assert results[0]["drug_name"] == "lisinopril"
@@ -45,10 +47,14 @@ async def test_session_isolation(chroma_client):
         client=chroma_client,
     )
 
-    results_a = await retrieve(_make_embedding(0.5), "sess-A", top_k=5, client=chroma_client)
+    results_a = await retrieve(
+        _make_embedding(0.5), "sess-A", top_k=5, client=chroma_client
+    )
     assert all(r["drug_name"] == "drugA" for r in results_a)
 
-    results_b = await retrieve(_make_embedding(0.5), "sess-B", top_k=5, client=chroma_client)
+    results_b = await retrieve(
+        _make_embedding(0.5), "sess-B", top_k=5, client=chroma_client
+    )
     assert all(r["drug_name"] == "drugB" for r in results_b)
 
 
@@ -61,7 +67,9 @@ async def test_store_multiple_chunks(chroma_client):
     ]
     await store(chunks, embeddings, metadatas, client=chroma_client)
 
-    results = await retrieve(_make_embedding(0.2), "sess-2", top_k=5, client=chroma_client)
+    results = await retrieve(
+        _make_embedding(0.2), "sess-2", top_k=5, client=chroma_client
+    )
     assert len(results) == 5
 
 
@@ -72,7 +80,9 @@ async def test_result_keys(chroma_client):
         [{"session_id": "sess-3", "drug_name": "aspirin", "section": "warnings"}],
         client=chroma_client,
     )
-    results = await retrieve(_make_embedding(0.3), "sess-3", top_k=1, client=chroma_client)
+    results = await retrieve(
+        _make_embedding(0.3), "sess-3", top_k=1, client=chroma_client
+    )
     assert set(results[0].keys()) == {"text", "drug_name", "section", "distance"}
 
 
@@ -84,7 +94,9 @@ async def test_retrieve_returns_distances(chroma_client):
         [{"session_id": "sess-dist", "drug_name": "aspirin", "section": "indications"}],
         client=chroma_client,
     )
-    results = await retrieve(_make_embedding(0.5), "sess-dist", top_k=1, client=chroma_client)
+    results = await retrieve(
+        _make_embedding(0.5), "sess-dist", top_k=1, client=chroma_client
+    )
     assert len(results) == 1
     assert "distance" in results[0]
     assert isinstance(results[0]["distance"], float)
@@ -105,7 +117,9 @@ async def test_delete_session_removes_all_docs(chroma_client):
     deleted = delete_session("sess-del", client=chroma_client)
     assert deleted == 2
 
-    results = await retrieve(_make_embedding(0.1), "sess-del", top_k=5, client=chroma_client)
+    results = await retrieve(
+        _make_embedding(0.1), "sess-del", top_k=5, client=chroma_client
+    )
     assert results == []
 
 
@@ -130,7 +144,9 @@ async def test_delete_session_does_not_affect_other_sessions(chroma_client):
 
     delete_session("sess-gone", client=chroma_client)
 
-    kept = await retrieve(_make_embedding(0.5), "sess-keep", top_k=5, client=chroma_client)
+    kept = await retrieve(
+        _make_embedding(0.5), "sess-keep", top_k=5, client=chroma_client
+    )
     assert len(kept) == 1
 
 
@@ -174,7 +190,9 @@ async def test_get_by_section_filters_by_drug_name(chroma_client):
 
 
 async def test_get_by_section_empty_when_no_match(chroma_client):
-    results = await get_by_section("nonexistent", "drug_interactions", client=chroma_client)
+    results = await get_by_section(
+        "nonexistent", "drug_interactions", client=chroma_client
+    )
     assert results == []
 
 
@@ -183,5 +201,7 @@ async def test_store_accumulates_across_calls(chroma_client):
     await store(["First chunk."], [_make_embedding(0.1)], [meta], client=chroma_client)
     await store(["Second chunk."], [_make_embedding(0.2)], [meta], client=chroma_client)
 
-    results = await retrieve(_make_embedding(0.15), "sess-4", top_k=5, client=chroma_client)
+    results = await retrieve(
+        _make_embedding(0.15), "sess-4", top_k=5, client=chroma_client
+    )
     assert len(results) == 2

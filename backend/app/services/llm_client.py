@@ -88,7 +88,8 @@ async def call_llm(
     except _GROQ_TRANSIENT as exc:
         _groq_breaker.record_failure()
         logger.info(
-            "LLM fallback activated — Groq transient error: %s", exc,
+            "LLM fallback activated — Groq transient error: %s",
+            exc,
             extra={"request_id": rid},
         )
         return await _call_cerebras(user_message, system_prompt, temperature)
@@ -130,7 +131,8 @@ async def generate_stream(context: str, question: str) -> AsyncGenerator[str, No
     except _GROQ_TRANSIENT as exc:
         _groq_breaker.record_failure()
         logger.info(
-            "LLM fallback activated — Groq transient error during stream: %s", exc,
+            "LLM fallback activated — Groq transient error during stream: %s",
+            exc,
             extra={"request_id": rid},
         )
         yield await _call_cerebras(prompt)

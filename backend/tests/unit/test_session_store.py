@@ -6,12 +6,9 @@ so no real Redis connection is required.
 
 import asyncio
 
-import pytest
-
 from app.models.schemas import PrescriptionEntry
 from app.services.session_store import (
     create_session,
-    delete_session,
     get_prescription,
     get_prescription_entries,
     get_session_data,
@@ -23,8 +20,8 @@ from app.services.session_store import (
     set_session_data,
 )
 
-
 # ── Round-trip tests ──────────────────────────────────────────────────────────
+
 
 async def test_set_and_get_returns_same_value():
     await set_session_data("s1", "mykey", {"foo": "bar", "n": 42})
@@ -45,11 +42,12 @@ async def test_get_missing_field_returns_none():
 
 # ── TTL / expiry ──────────────────────────────────────────────────────────────
 
+
 async def test_expired_session_returns_none():
     """A hash with TTL=1 must be unreadable after 1 second."""
-    import app.services.session_store as ss
-    from app.config import settings
     import unittest.mock as mock
+
+    from app.config import settings
 
     # Temporarily set session_ttl_seconds to 1
     with mock.patch.object(settings, "session_ttl_seconds", 1):
@@ -62,6 +60,7 @@ async def test_expired_session_returns_none():
 
 # ── session_exists ────────────────────────────────────────────────────────────
 
+
 async def test_session_exists_after_create():
     await create_session("exists_test")
     assert await session_exists("exists_test") is True
@@ -72,6 +71,7 @@ async def test_session_exists_false_for_unknown():
 
 
 # ── delete_session ────────────────────────────────────────────────────────────
+
 
 async def test_delete_session_removes_hash(monkeypatch):
     """delete_session must remove the Redis hash (vector_store call mocked)."""
@@ -85,6 +85,7 @@ async def test_delete_session_removes_hash(monkeypatch):
 
     # Call the raw Redis deletion directly (bypassing ChromaDB side-effect)
     import app.services.session_store as _m
+
     r = _m._get_redis()
     await r.delete(_m._key("del_test"))
 
@@ -93,6 +94,7 @@ async def test_delete_session_removes_hash(monkeypatch):
 
 def _make_delete_without_chroma(ss_module):
     """Return an async delete_session that skips the ChromaDB call."""
+
     async def _delete(session_id: str) -> None:
         r = ss_module._get_redis()
         await r.delete(ss_module._key(session_id))
@@ -101,6 +103,7 @@ def _make_delete_without_chroma(ss_module):
 
 
 # ── High-level wrappers ───────────────────────────────────────────────────────
+
 
 async def test_save_and_get_prescription():
     await save_prescription("p1", "Drug A 50mg")
