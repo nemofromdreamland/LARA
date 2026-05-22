@@ -4,6 +4,7 @@ from app.services.drug_extractor import (
     _extract_regex,
     _extract_spacy,
     extract_drug_names,
+    extract_prescription_entries,
 )
 
 _SAMPLE_RX = """
@@ -187,3 +188,108 @@ def test_extract_drug_names_works_without_spacy(monkeypatch):
     names = extract_drug_names("Sertraline 50mg daily\nLisinopril 10mg once daily")
     assert "sertraline" in names
     assert "lisinopril" in names
+
+
+# ---------------------------------------------------------------------------
+# extract_prescription_entries — structured bullet-format extraction (Fix 1)
+# ---------------------------------------------------------------------------
+
+_BULLET_RX = (
+    "1. Warfarin\n"
+    "• Dosage: 5mg\n"
+    "• Frequency: Once daily\n"
+    "• Duration: 90 days\n"
+    "• Instructions: Take at same time daily; avoid NSAIDs\n"
+    "2. Furosemide\n"
+    "• Dosage: 40mg\n"
+    "• Frequency: Once daily in the morning\n"
+    "• Duration: 90 days\n"
+    "• Instructions: Monitor weight daily\n"
+)
+
+
+def test_extract_entries_finds_both_drugs():
+    entries = extract_prescription_entries(_BULLET_RX)
+    assert len(entries) == 2
+    assert entries[0].drug_name == "warfarin"
+    assert entries[1].drug_name == "furosemide"
+
+
+def test_extract_entries_full_fields_first_drug():
+    entries = extract_prescription_entries(_BULLET_RX)
+    assert entries[0].dosage == "5mg"
+    assert entries[0].frequency == "Once daily"
+    assert entries[0].duration == "90 days"
+    assert entries[0].instructions == "Take at same time daily; avoid NSAIDs"
+
+
+def test_extract_entries_full_fields_second_drug():
+    entries = extract_prescription_entries(_BULLET_RX)
+    assert entries[1].dosage == "40mg"
+    assert entries[1].frequency == "Once daily in the morning"
+    assert entries[1].duration == "90 days"
+    assert entries[1].instructions == "Monitor weight daily"
+
+
+def test_extract_entries_five_drugs_polypharmacy():
+    text = (
+        "1. Warfarin\n• Dosage: 5mg\n• Frequency: Once daily\n"
+        "• Duration: 90 days\n• Instructions: Avoid NSAIDs\n"
+        "2. Furosemide\n• Dosage: 40mg\n• Frequency: Once daily in the morning\n"
+        "• Duration: 90 days\n• Instructions: Monitor weight daily\n"
+        "3. Carvedilol\n• Dosage: 6.25mg\n• Frequency: Twice daily\n"
+        "• Duration: 90 days\n• Instructions: Take with food\n"
+        "4. Spironolactone\n• Dosage: 25mg\n• Frequency: Once daily\n"
+        "• Duration: 90 days\n• Instructions: Monitor potassium levels\n"
+        "5. Digoxin\n• Dosage: 0.125mg\n• Frequency: Once daily\n"
+        "• Duration: 90 days\n• Instructions: Report nausea immediately\n"
+    )
+    entries = extract_prescription_entries(text)
+    assert len(entries) == 5
+    assert [e.drug_name for e in entries] == [
+        "warfarin", "furosemide", "carvedilol", "spironolactone", "digoxin"
+    ]
+    assert all(e.dosage is not None for e in entries)
+    assert all(e.frequency is not None for e in entries)
+
+
+def test_extract_entries_falls_back_to_name_only_for_non_bullet():
+    text = "Patient takes Sertraline 50mg daily and Zolpidem 10mg at bedtime."
+    entries = extract_prescription_entries(text)
+    names = [e.drug_name for e in entries]
+    assert "sertraline" in names
+
+
+def test_extract_entries_missing_fields_are_none():
+    text = "1. Digoxin\n• Dosage: 0.125mg\n"
+    entries = extract_prescription_entries(text)
+    assert entries[0].drug_name == "digoxin"
+    assert entries[0].dosage == "0.125mg"
+    assert entries[0].frequency is None
+    assert entries[0].duration is None
+    assert entries[0].instructions is None
+
+
+def test_extract_entries_lowercases_drug_name():
+    text = "1. Atorvastatin\n• Dosage: 40mg\n"
+    entries = extract_prescription_entries(text)
+    assert entries[0].drug_name == "atorvastatin"
+
+
+# ---------------------------------------------------------------------------
+# Extended _SUFFIX_RE — covers drugs missed before Fix 3
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("Levothyroxine 75mcg daily", "levothyroxine"),
+        ("Furosemide 40mg once daily", "furosemide"),
+        ("Warfarin 5mg once daily", "warfarin"),
+        ("Spironolactone 25mg daily", "spironolactone"),
+        ("Zolpidem 10mg at bedtime", "zolpidem"),
+    ],
+)
+def test_suffix_re_extended_drugs(text: str, expected: str):
+    assert expected in extract_drug_names(text)

@@ -2,9 +2,11 @@ import json
 import logging
 import re
 
+import groq as groq_sdk
+
 import app.services.llm_client as llm_client
 from app.models.schemas import PrescriptionEntry
-from app.services.drug_extractor import extract_drug_names
+from app.services.drug_extractor import extract_prescription_entries
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +34,16 @@ _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 _MAX_TEXT_LENGTH = 8000
 
 # Patterns that indicate prompt-injection attempts — matched per line, case-insensitive.
+# "ignore" is narrowed to require a follow-on injection keyword so that legitimate
+# clinical instructions ("do not ignore blurred vision") are not stripped.
 _INJECTION_PATTERNS = re.compile(
-    r"ignore|forget|system:|new instruction|<\||^\[INST\]",
-    re.IGNORECASE,
+    r"\bignore\s+(?:previous|prior|above|all|the\s+above|instructions?|prompts?)\b"
+    r"|\bforget\b"
+    r"|system\s*:"
+    r"|new\s+instruction"
+    r"|<\|"
+    r"|^\[INST\]",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 
@@ -96,6 +105,11 @@ async def parse_prescription(text: str) -> list[PrescriptionEntry]:
             "LLM extraction returned empty list — activating regex fallback. "
             "Check that the LLM is receiving the prescription text correctly."
         )
+    except groq_sdk.AuthenticationError:
+        # Non-transient: a bad API key means every request will fail.
+        # Re-raise so the caller surfaces a 500 rather than silently
+        # degrading every upload to name-only extraction.
+        raise
     except Exception as exc:
         logger.error(
             "LLM extraction failed (%s: %s) — activating regex fallback. "
@@ -104,6 +118,5 @@ async def parse_prescription(text: str) -> list[PrescriptionEntry]:
             exc,
         )
 
-    # Fallback: regex/spaCy pipeline (drug names only, no structured fields)
-    names = extract_drug_names(safe_text)
-    return [PrescriptionEntry(drug_name=name) for name in names]
+    # Fallback: structured bullet-format extractor (with name-only inner fallback)
+    return extract_prescription_entries(safe_text)

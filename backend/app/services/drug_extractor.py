@@ -1,6 +1,8 @@
 import logging
 import re
 
+from app.models.schemas import PrescriptionEntry
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -18,15 +20,22 @@ _RX_LINE_RE = re.compile(
 _SUFFIX_RE = re.compile(
     r"\b([A-Z][a-z]{2,}"
     r"(?:pril|sartan|statin|mab|nib|afil|xaban|parin"
-    r"|olol|oxin|azole|mycin|cycline|cillin|dronate"
+    r"|olol|oxin|oxine|azole|mycin|cycline|cillin|dronate"
     r"|amine|idine|tidine|zepam|zolam|oxetine|prazole"
-    r"|raline|dipine|triptan|setron|pram|phen|nophen))\b"
+    r"|raline|dipine|triptan|setron|pram|phen|nophen"
+    r"|semide|farin|lactone|pidem))\b"
 )
 
 # Numbered list items: "1. Acetaminophen"
 _NUMBERED_ITEM_RE = re.compile(
     r"^\d+\.\s+([A-Z][a-zA-Z]{2,}(?:\s+[A-Z][a-zA-Z]{2,})?)\s*$",
     re.MULTILINE,
+)
+
+# Bullet field lines: "• Dosage: 5mg"
+_BULLET_FIELD_RE = re.compile(
+    r"[•·\-]\s*(Dosage|Frequency|Duration|Instructions):\s*(.+)",
+    re.IGNORECASE,
 )
 
 # ---------------------------------------------------------------------------
@@ -295,3 +304,51 @@ def extract_drug_names(text: str) -> list[str]:
             seen.add(name)
             result.append(name)
     return result
+
+
+def extract_prescription_entries(text: str) -> list[PrescriptionEntry]:
+    """Extract full PrescriptionEntry objects from bullet-format prescriptions.
+
+    Walks the text line-by-line. Each numbered drug line (matched by
+    _NUMBERED_ITEM_RE) starts a new entry; subsequent bullet lines
+    (• Dosage: / • Frequency: / • Duration: / • Instructions:) are
+    consumed until the next numbered item or end of text.
+
+    Falls back to name-only extraction (extract_drug_names) when no
+    numbered items are found, preserving the previous behaviour for
+    non-bullet prescription formats.
+    """
+    lines = text.splitlines()
+    entries: list[PrescriptionEntry] = []
+    i = 0
+    while i < len(lines):
+        m = _NUMBERED_ITEM_RE.match(lines[i].strip())
+        if m:
+            drug = m.group(1).strip().lower()
+            fields: dict[str, str | None] = {
+                "dosage": None,
+                "frequency": None,
+                "duration": None,
+                "instructions": None,
+            }
+            j = i + 1
+            while j < len(lines):
+                bf = _BULLET_FIELD_RE.match(lines[j].strip())
+                if bf:
+                    key = bf.group(1).lower()
+                    val = bf.group(2).strip()
+                    if key in fields:
+                        fields[key] = val
+                    j += 1
+                elif _NUMBERED_ITEM_RE.match(lines[j].strip()):
+                    break
+                else:
+                    j += 1
+            entries.append(PrescriptionEntry(drug_name=drug, **fields))
+            i = j
+        else:
+            i += 1
+
+    if not entries:
+        return [PrescriptionEntry(drug_name=n) for n in extract_drug_names(text)]
+    return entries
