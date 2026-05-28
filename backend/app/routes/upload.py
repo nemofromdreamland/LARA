@@ -1,17 +1,27 @@
 import asyncio
 import logging
+import uuid
 
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 
 from app.config import settings
 from app.limiter import limiter
-from app.models.schemas import UploadResponse
-from app.services.chunker import chunk_text
-from app.services.dailymed import fetch_leaflet_sections
+from app.models.schemas import JobStatusResponse, UploadJobResponse
 from app.services.embedder import embed
+from app.services.ingestion import process_drug
 from app.services.pdf_parser import PDFExtractionError, extract_text
 from app.services.prescription_parser import parse_prescription
 from app.services.session_store import (
+    get_job_status,
+    save_job_status,
     save_prescription,
     save_prescription_entries,
     save_upload_result,
@@ -24,38 +34,91 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-async def _process_drug(
-    drug: str, session_id: str
-) -> tuple[str, list[str], list[dict]]:
-    """Fetch leaflet sections for one drug and produce chunks + metadata.
-
-    Returns (drug, chunks, metas). Both lists are empty when no leaflet is found.
-    """
-    sections = await fetch_leaflet_sections(drug)
-    if not sections:
-        return drug, [], []
-    chunks: list[str] = []
-    metas: list[dict] = []
-    for section in sections:
-        for chunk in chunk_text(section.text):
-            chunks.append(chunk)
-            metas.append(
-                {
-                    "session_id": session_id,
-                    "drug_name": drug,
-                    "section": section.section,
-                }
+async def _run_ingestion(
+    job_id: str,
+    session_id: str,
+    text: str,
+    rid: str,
+) -> None:
+    """Background task: parse prescription → fetch leaflets → embed → store."""
+    try:
+        entries = await parse_prescription(text)
+        if not entries:
+            await save_job_status(
+                job_id,
+                session_id,
+                "failed",
+                error="No drug names found in prescription.",
             )
-    return drug, chunks, metas
+            return
+
+        await save_prescription(session_id, text)
+        await save_prescription_entries(session_id, entries)
+
+        drug_names = [e.drug_name for e in entries]
+
+        results = await asyncio.gather(
+            *[process_drug(drug, session_id) for drug in drug_names],
+            return_exceptions=True,
+        )
+
+        stored_drugs: list[str] = []
+        missing_drugs: list[str] = []
+
+        for drug, result in zip(drug_names, results):
+            if isinstance(result, Exception):
+                logger.warning(
+                    "DailyMed fetch failed for %s: %s",
+                    drug,
+                    result,
+                    extra={"request_id": rid},
+                )
+                missing_drugs.append(drug)
+                continue
+            _, chunks, metas = result
+            if not chunks:
+                logger.warning(
+                    "No DailyMed leaflet found for drug: %s",
+                    drug,
+                    extra={"request_id": rid},
+                )
+                missing_drugs.append(drug)
+                continue
+            embeddings = await embed(chunks)
+            await store(chunks, embeddings, metas)
+            stored_drugs.append(drug)
+
+        await save_upload_result(session_id, stored_drugs, missing_drugs)
+        await save_job_status(
+            job_id,
+            session_id,
+            "done",
+            drugs_found=stored_drugs,
+            missing_leaflets=missing_drugs,
+        )
+
+        logger.info(
+            "ingestion done: %d stored, %d missing",
+            len(stored_drugs),
+            len(missing_drugs),
+            extra={"request_id": rid},
+        )
+
+    except Exception as exc:
+        logger.exception(
+            "ingestion failed for job %s: %s", job_id, exc, extra={"request_id": rid}
+        )
+        await save_job_status(job_id, session_id, "failed", error=str(exc))
 
 
-@router.post("/upload", response_model=UploadResponse)
+@router.post("/upload", response_model=UploadJobResponse, status_code=202)
 @limiter.limit(settings.upload_rate_limit)
 async def upload(
     request: Request,
+    background_tasks: BackgroundTasks,
     session_id: str = Form(...),
     file: UploadFile = File(...),
-) -> UploadResponse:
+) -> UploadJobResponse:
     rid = get_request_id()
 
     if file.content_type != "application/pdf":
@@ -71,8 +134,6 @@ async def upload(
             status_code=400, detail="File does not appear to be a valid PDF."
         )
 
-    logger.info("upload started for session %s", session_id, extra={"request_id": rid})
-
     try:
         text = await run_sync(extract_text, raw_bytes)
     except PDFExtractionError as exc:
@@ -81,63 +142,31 @@ async def upload(
     if not text:
         raise HTTPException(status_code=422, detail="Could not extract text from PDF.")
 
-    # LLM-based structured extraction (falls back to regex if LLM is unavailable).
-    entries = await parse_prescription(text)
-    if not entries:
-        raise HTTPException(
-            status_code=422, detail="No drug names found in prescription."
-        )
+    job_id = str(uuid.uuid4())
+    await save_job_status(job_id, session_id, "processing")
 
-    await save_prescription(session_id, text)
-    await save_prescription_entries(session_id, entries)
-
-    # Derive clean drug names for DailyMed lookup.
-    drug_names = [e.drug_name for e in entries]
-
-    # Fetch all drug leaflets concurrently; a single drug failure won't abort the rest.
-    results = await asyncio.gather(
-        *[_process_drug(drug, session_id) for drug in drug_names],
-        return_exceptions=True,
-    )
-
-    stored_drugs: list[str] = []
-    missing_drugs: list[str] = []
-
-    for drug, result in zip(drug_names, results):
-        if isinstance(result, Exception):
-            logger.warning(
-                "DailyMed fetch failed for %s: %s",
-                drug,
-                result,
-                extra={"request_id": rid},
-            )
-            missing_drugs.append(drug)
-            continue
-        _, chunks, metas = result
-        if not chunks:
-            logger.warning(
-                "No DailyMed leaflet found for drug: %s",
-                drug,
-                extra={"request_id": rid},
-            )
-            missing_drugs.append(drug)
-            continue
-        embeddings = await embed(chunks)
-        await store(chunks, embeddings, metas)
-        stored_drugs.append(drug)
-
-    await save_upload_result(session_id, stored_drugs, missing_drugs)
+    background_tasks.add_task(_run_ingestion, job_id, session_id, text, rid)
 
     logger.info(
-        "drugs found: %d stored, %d missing",
-        len(stored_drugs),
-        len(missing_drugs),
+        "upload accepted, job %s started for session %s",
+        job_id,
+        session_id,
         extra={"request_id": rid},
     )
 
-    return UploadResponse(
-        session_id=session_id,
-        drugs_found=stored_drugs,
-        missing_leaflets=missing_drugs,
-        status="ok" if stored_drugs else "no_leaflets_found",
+    return UploadJobResponse(job_id=job_id, session_id=session_id, status="processing")
+
+
+@router.get("/upload/status/{job_id}", response_model=JobStatusResponse)
+async def upload_status(job_id: str) -> JobStatusResponse:
+    data = await get_job_status(job_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="Job not found.")
+    return JobStatusResponse(
+        job_id=job_id,
+        session_id=data["session_id"],
+        status=data["status"],
+        drugs_found=data.get("drugs_found") or [],
+        missing_leaflets=data.get("missing_leaflets") or [],
+        error=data.get("error"),
     )

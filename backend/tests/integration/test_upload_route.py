@@ -53,7 +53,7 @@ def pdf_with_drug() -> bytes:
 
 
 @patch("app.routes.upload.parse_prescription", new_callable=AsyncMock)
-@patch("app.routes.upload.fetch_leaflet_sections", new_callable=AsyncMock)
+@patch("app.services.ingestion.fetch_leaflet_sections", new_callable=AsyncMock)
 @patch("app.routes.upload.embed", new_callable=AsyncMock)
 @patch("app.routes.upload.store", new_callable=AsyncMock)
 def test_upload_success(
@@ -69,19 +69,18 @@ def test_upload_success(
         data={"session_id": "test-session-1"},
         files={"file": ("rx.pdf", io.BytesIO(pdf_with_drug), "application/pdf")},
     )
-    assert response.status_code == 200
+    assert response.status_code == 202
     data = response.json()
     assert data["session_id"] == "test-session-1"
-    assert "lisinopril" in data["drugs_found"]
-    assert data["missing_leaflets"] == []
-    assert data["status"] == "ok"
+    assert "job_id" in data
+    assert data["status"] == "processing"
 
 
 @patch("app.routes.upload.parse_prescription", new_callable=AsyncMock)
-@patch("app.routes.upload.fetch_leaflet_sections", new_callable=AsyncMock)
+@patch("app.services.ingestion.fetch_leaflet_sections", new_callable=AsyncMock)
 @patch("app.routes.upload.embed", new_callable=AsyncMock)
 @patch("app.routes.upload.store", new_callable=AsyncMock)
-def test_upload_unknown_drug_returns_no_leaflets(
+def test_upload_unknown_drug_job_accepted(
     mock_store, mock_embed, mock_fetch, mock_parse, client
 ):
     mock_parse.return_value = MOCK_ENTRIES
@@ -93,15 +92,15 @@ def test_upload_unknown_drug_returns_no_leaflets(
         data={"session_id": "test-session-2"},
         files={"file": ("rx.pdf", io.BytesIO(pdf), "application/pdf")},
     )
-    assert response.status_code == 200
+    # Upload always accepted immediately; missing leaflets are reported via job status
+    assert response.status_code == 202
     data = response.json()
-    assert data["status"] == "no_leaflets_found"
-    assert data["drugs_found"] == []
-    assert "lisinopril" in data["missing_leaflets"]
+    assert data["status"] == "processing"
+    assert "job_id" in data
 
 
 # ---------------------------------------------------------------------------
-# Validation errors
+# Validation errors (synchronous — happen before background task)
 # ---------------------------------------------------------------------------
 
 
@@ -128,7 +127,8 @@ def test_upload_empty_pdf_returns_422(client):
 
 
 @patch("app.routes.upload.parse_prescription", new_callable=AsyncMock)
-def test_upload_pdf_no_drugs_returns_422(mock_parse, client):
+def test_upload_pdf_no_drugs_job_accepted(mock_parse, client):
+    """No drugs found is reported asynchronously via job status, not as 422."""
     mock_parse.return_value = []  # LLM + fallback both found nothing
     pdf = _make_pdf("The patient is feeling well today.")
 
@@ -137,4 +137,17 @@ def test_upload_pdf_no_drugs_returns_422(mock_parse, client):
         data={"session_id": "test-session-5"},
         files={"file": ("rx.pdf", io.BytesIO(pdf), "application/pdf")},
     )
-    assert response.status_code == 422
+    # Accepted immediately; background task will write status=failed
+    assert response.status_code == 202
+    data = response.json()
+    assert data["status"] == "processing"
+
+
+# ---------------------------------------------------------------------------
+# Job status endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_upload_status_not_found(client):
+    response = client.get("/upload/status/nonexistent-job-id")
+    assert response.status_code == 404

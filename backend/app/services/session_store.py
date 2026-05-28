@@ -118,3 +118,42 @@ async def get_upload_result(session_id: str) -> tuple[list[str], list[str]]:
     drugs_found = await get_session_data(session_id, "drugs_found") or []
     missing_leaflets = await get_session_data(session_id, "missing_leaflets") or []
     return drugs_found, missing_leaflets
+
+
+# ── Upload job state ─────────────────────────────────────────────────────────
+
+_JOB_TTL = 3600  # jobs expire after 1 h regardless of session TTL
+
+
+def _job_key(job_id: str) -> str:
+    return f"job:{job_id}"
+
+
+async def save_job_status(
+    job_id: str,
+    session_id: str,
+    status: str,
+    drugs_found: list[str] | None = None,
+    missing_leaflets: list[str] | None = None,
+    error: str | None = None,
+) -> None:
+    r = _get_redis()
+    key = _job_key(job_id)
+    payload: dict[str, str] = {
+        "session_id": json.dumps(session_id),
+        "status": json.dumps(status),
+        "drugs_found": json.dumps(drugs_found or []),
+        "missing_leaflets": json.dumps(missing_leaflets or []),
+        "error": json.dumps(error),
+    }
+    await r.hset(key, mapping=payload)
+    await r.expire(key, _JOB_TTL)
+
+
+async def get_job_status(job_id: str) -> dict | None:
+    r = _get_redis()
+    key = _job_key(job_id)
+    raw = await r.hgetall(key)
+    if not raw:
+        return None
+    return {k: json.loads(v) for k, v in raw.items()}

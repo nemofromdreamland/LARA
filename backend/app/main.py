@@ -1,5 +1,7 @@
+import asyncio
 import logging
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -14,7 +16,8 @@ from app.config import settings
 from app.limiter import limiter
 from app.routes import chat, health, interactions, session, upload
 from app.services import session_store
-from app.utils import request_id_var
+from app.services.embedder import preload_model
+from app.utils import request_id_var, run_sync
 
 logger = logging.getLogger(__name__)
 
@@ -45,9 +48,18 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _configure_logging()
+    executor = ThreadPoolExecutor(
+        max_workers=settings.thread_pool_workers,
+        thread_name_prefix="lara-blocking",
+    )
+    asyncio.get_event_loop().set_default_executor(executor)
     await session_store.init_redis(settings.redis_url)
-    yield
-    await session_store.close_redis()
+    await run_sync(preload_model)
+    try:
+        yield
+    finally:
+        await session_store.close_redis()
+        executor.shutdown(wait=False)
 
 
 app = FastAPI(title="LARA API", version="0.1.0", lifespan=lifespan)

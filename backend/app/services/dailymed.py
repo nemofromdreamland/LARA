@@ -1,8 +1,8 @@
+import json
 import logging
 import re
-import time
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 import httpx
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
@@ -14,24 +14,47 @@ logger = logging.getLogger(__name__)
 
 DAILYMED_BASE = "https://dailymed.nlm.nih.gov/dailymed/services/v2"
 
-_cache: dict[
-    str, tuple[list, float]
-] = {}  # normalized_drug_name → (sections, timestamp)
+_CACHE_PREFIX = "dailymed:"
 
 
-def _cache_get(drug_name: str) -> list | None:
-    entry = _cache.get(drug_name)
-    if entry and (time.time() - entry[1]) < settings.dailymed_cache_ttl_seconds:
-        return entry[0]
-    return None
+def _get_redis():
+    from app.services.session_store import _get_redis as _session_get_redis
+
+    return _session_get_redis()
 
 
-def _cache_set(drug_name: str, sections: list) -> None:
-    _cache[drug_name] = (sections, time.time())
+async def _cache_get(drug_name: str) -> list | None:
+    try:
+        r = _get_redis()
+        raw = await r.get(f"{_CACHE_PREFIX}{drug_name}")
+        if raw is None:
+            return None
+        return json.loads(raw)
+    except Exception:
+        return None
 
 
-def clear_dailymed_cache() -> None:
-    _cache.clear()
+async def _cache_set(drug_name: str, sections: list) -> None:
+    try:
+        r = _get_redis()
+        payload = json.dumps([asdict(s) for s in sections])
+        await r.setex(
+            f"{_CACHE_PREFIX}{drug_name}",
+            settings.dailymed_cache_ttl_seconds,
+            payload,
+        )
+    except Exception:
+        pass  # cache write failure is non-fatal
+
+
+async def clear_dailymed_cache() -> None:
+    try:
+        r = _get_redis()
+        keys = await r.keys(f"{_CACHE_PREFIX}*")
+        if keys:
+            await r.delete(*keys)
+    except Exception:
+        pass
 
 
 # Matches trailing dosage info: "50 mg", "10mg", "0.5 mcg/ml", etc.
@@ -86,6 +109,10 @@ class LeafletSection:
     drug_name: str
     section: str
     text: str
+
+
+def _sections_from_cache(raw: list[dict]) -> list[LeafletSection]:
+    return [LeafletSection(**item) for item in raw]
 
 
 @retry(
@@ -172,19 +199,19 @@ async def fetch_leaflet_sections(drug_name: str) -> list[LeafletSection]:
     If the original name returns no results, retries once with a normalized
     form (lowercase, dosage info stripped) before giving up.
 
-    Results are cached in-process by normalized drug name for
+    Results are cached in Redis by normalized drug name for
     settings.dailymed_cache_ttl_seconds (default 24 h) to avoid redundant
-    API calls when the same drug appears across multiple uploads.
+    API calls when the same drug appears across multiple uploads or workers.
 
     Returns an empty list (with a warning) if the drug is not found.
     Raises httpx.HTTPError after 3 retries if the API is unavailable.
     """
     normalized_name = _normalize_drug_name(drug_name)
 
-    cached = _cache_get(normalized_name)
+    cached = await _cache_get(normalized_name)
     if cached is not None:
         logger.debug("DailyMed cache hit: %s", drug_name)
-        return cached
+        return _sections_from_cache(cached)
 
     rid = get_request_id()
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -206,5 +233,5 @@ async def fetch_leaflet_sections(drug_name: str) -> list[LeafletSection]:
             raw = await _fetch_sections_raw(set_id, client)
             sections = _parse_sections(raw, drug_name)
 
-    _cache_set(normalized_name, sections)
+    await _cache_set(normalized_name, sections)
     return sections

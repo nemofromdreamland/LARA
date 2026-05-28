@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     dailymed_cache_ttl_seconds: int = 86_400
     upload_rate_limit: str = "5/minute"
     chat_rate_limit: str = "20/minute"
+    groq_timeout_seconds: float = 30.0
+    thread_pool_workers: int = 8
 
     @model_validator(mode="after")
     def _check_api_key(self) -> "Settings":

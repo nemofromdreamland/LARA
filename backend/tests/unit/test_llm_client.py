@@ -136,7 +136,9 @@ async def test_falls_back_to_cerebras_on_rate_limit(
     mock_settings.llm_provider = LLMProvider.groq
     mock_settings.groq_api_key = "fake-key"
     mock_settings.cerebras_api_key = "fake-cerebras-key"
-    mock_breaker.allow_request.return_value = True
+    mock_breaker.allow_request = AsyncMock(return_value=True)
+    mock_breaker.record_failure = AsyncMock()
+    mock_breaker.record_success = AsyncMock()
 
     mock_groq_cls.return_value.chat.completions.create = AsyncMock(
         side_effect=groq_sdk.RateLimitError(
@@ -165,7 +167,9 @@ async def test_falls_back_to_cerebras_on_internal_server_error(
     mock_settings.llm_provider = LLMProvider.groq
     mock_settings.groq_api_key = "fake-key"
     mock_settings.cerebras_api_key = "fake-cerebras-key"
-    mock_breaker.allow_request.return_value = True
+    mock_breaker.allow_request = AsyncMock(return_value=True)
+    mock_breaker.record_failure = AsyncMock()
+    mock_breaker.record_success = AsyncMock()
 
     mock_groq_cls.return_value.chat.completions.create = AsyncMock(
         side_effect=groq_sdk.InternalServerError(
@@ -198,7 +202,7 @@ async def test_skips_groq_when_circuit_open(
 
     mock_settings.llm_provider = LLMProvider.groq
     mock_settings.cerebras_api_key = "fake-cerebras-key"
-    mock_breaker.allow_request.return_value = False  # circuit is OPEN
+    mock_breaker.allow_request = AsyncMock(return_value=False)  # circuit is OPEN
 
     mock_http = _mock_cerebras_client("Cerebras (circuit open).")
     mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_http)
@@ -224,7 +228,9 @@ async def test_non_transient_groq_error_raises(
 
     mock_settings.llm_provider = LLMProvider.groq
     mock_settings.groq_api_key = "fake-key"
-    mock_breaker.allow_request.return_value = True
+    mock_breaker.allow_request = AsyncMock(return_value=True)
+    mock_breaker.record_failure = AsyncMock()
+    mock_breaker.record_success = AsyncMock()
 
     mock_groq_cls.return_value.chat.completions.create = AsyncMock(
         side_effect=groq_sdk.AuthenticationError(
@@ -253,7 +259,8 @@ async def test_groq_success_records_on_breaker(
 
     mock_settings.llm_provider = LLMProvider.groq
     mock_settings.groq_api_key = "fake-key"
-    mock_breaker.allow_request.return_value = True
+    mock_breaker.allow_request = AsyncMock(return_value=True)
+    mock_breaker.record_success = AsyncMock()
 
     mock_client = _mock_groq_client("ok")
     mock_groq_cls.return_value = mock_client
@@ -289,7 +296,8 @@ async def test_generate_stream_yields_tokens(
 
     mock_settings.llm_provider = LLMProvider.groq
     mock_settings.groq_api_key = "fake-key"
-    mock_breaker.allow_request.return_value = True
+    mock_breaker.allow_request = AsyncMock(return_value=True)
+    mock_breaker.record_success = AsyncMock()
 
     mock_groq_cls.return_value.chat.completions.create = AsyncMock(
         return_value=_make_groq_stream_chunks("Hello", " world", "!")
@@ -336,7 +344,9 @@ async def test_generate_stream_falls_back_on_rate_limit(
     mock_settings.llm_provider = LLMProvider.groq
     mock_settings.groq_api_key = "fake-key"
     mock_settings.cerebras_api_key = "fake-cerebras-key"
-    mock_breaker.allow_request.return_value = True
+    mock_breaker.allow_request = AsyncMock(return_value=True)
+    mock_breaker.record_failure = AsyncMock()
+    mock_breaker.record_success = AsyncMock()
 
     mock_groq_cls.return_value.chat.completions.create = AsyncMock(
         side_effect=groq_sdk.RateLimitError(

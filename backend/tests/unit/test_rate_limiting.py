@@ -60,16 +60,9 @@ def client() -> TestClient:
 # ---------------------------------------------------------------------------
 
 
-@patch("app.routes.upload.parse_prescription", new_callable=AsyncMock)
-@patch("app.routes.upload.fetch_leaflet_sections", new_callable=AsyncMock)
-@patch("app.routes.upload.embed", new_callable=AsyncMock)
-@patch("app.routes.upload.store", new_callable=AsyncMock)
-def test_upload_allows_five_requests(
-    mock_store, mock_embed, mock_fetch, mock_parse, client: TestClient
-):
-    mock_parse.return_value = MOCK_ENTRIES
-    mock_fetch.return_value = MOCK_SECTIONS
-    mock_embed.return_value = [[0.1] * 768] * 4
+def test_upload_allows_five_requests(client: TestClient):
+    # Pipeline runs in the background; route handler only validates PDF and
+    # returns 202, so no service mocks are needed for rate limit checks.
     pdf = _make_pdf()
 
     for i in range(5):
@@ -78,21 +71,12 @@ def test_upload_allows_five_requests(
             data={"session_id": f"sess-{i}"},
             files={"file": ("rx.pdf", io.BytesIO(pdf), "application/pdf")},
         )
-        assert res.status_code == 200, (
+        assert res.status_code == 202, (
             f"Request {i + 1} unexpectedly blocked: {res.text}"
         )
 
 
-@patch("app.routes.upload.parse_prescription", new_callable=AsyncMock)
-@patch("app.routes.upload.fetch_leaflet_sections", new_callable=AsyncMock)
-@patch("app.routes.upload.embed", new_callable=AsyncMock)
-@patch("app.routes.upload.store", new_callable=AsyncMock)
-def test_upload_blocks_sixth_request(
-    mock_store, mock_embed, mock_fetch, mock_parse, client: TestClient
-):
-    mock_parse.return_value = MOCK_ENTRIES
-    mock_fetch.return_value = MOCK_SECTIONS
-    mock_embed.return_value = [[0.1] * 768] * 4
+def test_upload_blocks_sixth_request(client: TestClient):
     pdf = _make_pdf()
 
     for i in range(5):
@@ -114,22 +98,12 @@ def test_upload_429_body_has_detail_key(client: TestClient):
     """Drive the limit to exhaustion and verify the JSON shape."""
     pdf = _make_pdf()
 
-    with (
-        patch("app.routes.upload.parse_prescription", new_callable=AsyncMock) as mp,
-        patch("app.routes.upload.fetch_leaflet_sections", new_callable=AsyncMock) as mf,
-        patch("app.routes.upload.embed", new_callable=AsyncMock) as me,
-        patch("app.routes.upload.store", new_callable=AsyncMock),
-    ):
-        mp.return_value = MOCK_ENTRIES
-        mf.return_value = MOCK_SECTIONS
-        me.return_value = [[0.1] * 768] * 4
-
-        for i in range(5):
-            client.post(
-                "/upload",
-                data={"session_id": f"sess-{i}"},
-                files={"file": ("rx.pdf", io.BytesIO(pdf), "application/pdf")},
-            )
+    for i in range(5):
+        client.post(
+            "/upload",
+            data={"session_id": f"sess-{i}"},
+            files={"file": ("rx.pdf", io.BytesIO(pdf), "application/pdf")},
+        )
 
     res = client.post(
         "/upload",

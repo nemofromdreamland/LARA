@@ -7,7 +7,7 @@ from groq import AsyncGroq
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.config import LLMProvider, settings
-from app.services.circuit_breaker import CircuitBreaker
+from app.services.circuit_breaker import RedisCircuitBreaker
 from app.utils import get_request_id
 
 logger = logging.getLogger(__name__)
@@ -27,9 +27,9 @@ SYSTEM_PROMPT = (
 _MODEL_GROQ = "llama-3.3-70b-versatile"
 _MODEL_CEREBRAS = "llama3.3-70b"
 
-# Module-level breaker — shared across all requests in the process.
+# Redis-backed breaker — state is shared across all uvicorn workers.
 # Trips after 3 consecutive Groq failures; resets after 60 s cooldown.
-_groq_breaker = CircuitBreaker(failure_threshold=3, cooldown_seconds=60.0)
+_groq_breaker = RedisCircuitBreaker("groq", failure_threshold=3, cooldown_seconds=60.0)
 
 # Singleton Groq client — reuses the underlying httpx connection pool across requests.
 _groq_client: AsyncGroq | None = None
@@ -38,7 +38,15 @@ _groq_client: AsyncGroq | None = None
 def _get_groq_client() -> AsyncGroq:
     global _groq_client
     if _groq_client is None:
-        _groq_client = AsyncGroq(api_key=settings.groq_api_key)
+        _groq_client = AsyncGroq(
+            api_key=settings.groq_api_key,
+            timeout=httpx.Timeout(
+                connect=5.0,
+                read=settings.groq_timeout_seconds,
+                write=10.0,
+                pool=5.0,
+            ),
+        )
     return _groq_client
 
 
@@ -74,7 +82,7 @@ async def call_llm(
     if settings.llm_provider == LLMProvider.cerebras:
         return await _call_cerebras(user_message, system_prompt, temperature)
 
-    if not _groq_breaker.allow_request():
+    if not await _groq_breaker.allow_request():
         logger.info(
             "LLM fallback activated — Groq circuit open",
             extra={"request_id": rid},
@@ -83,10 +91,10 @@ async def call_llm(
 
     try:
         result = await _call_groq(user_message, system_prompt, temperature)
-        _groq_breaker.record_success()
+        await _groq_breaker.record_success()
         return result
     except _GROQ_TRANSIENT as exc:
-        _groq_breaker.record_failure()
+        await _groq_breaker.record_failure()
         logger.info(
             "LLM fallback activated — Groq transient error: %s",
             exc,
@@ -116,7 +124,7 @@ async def generate_stream(context: str, question: str) -> AsyncGenerator[str, No
         yield await _call_cerebras(prompt)
         return
 
-    if not _groq_breaker.allow_request():
+    if not await _groq_breaker.allow_request():
         logger.info(
             "LLM fallback activated — Groq circuit open (stream)",
             extra={"request_id": rid},
@@ -127,9 +135,9 @@ async def generate_stream(context: str, question: str) -> AsyncGenerator[str, No
     try:
         async for chunk in _stream_groq(prompt):
             yield chunk
-        _groq_breaker.record_success()
+        await _groq_breaker.record_success()
     except _GROQ_TRANSIENT as exc:
-        _groq_breaker.record_failure()
+        await _groq_breaker.record_failure()
         logger.info(
             "LLM fallback activated — Groq transient error during stream: %s",
             exc,

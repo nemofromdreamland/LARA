@@ -11,6 +11,11 @@ def is_model_loaded() -> bool:
     return _model is not None
 
 
+def preload_model() -> None:
+    """Eagerly load the embedding model. Call from the app lifespan startup hook."""
+    _get_model()
+
+
 def _get_model() -> SentenceTransformer:
     global _model
     if _model is None:

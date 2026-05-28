@@ -34,6 +34,21 @@ class UploadResponse(BaseModel):
     status: Literal["ok", "no_leaflets_found"]
 
 
+class UploadJobResponse(BaseModel):
+    job_id: str
+    session_id: str
+    status: Literal["processing"]
+
+
+class JobStatusResponse(BaseModel):
+    job_id: str
+    session_id: str
+    status: Literal["processing", "done", "failed"]
+    drugs_found: list[str] = []
+    missing_leaflets: list[str] = []
+    error: str | None = None
+
+
 class Source(BaseModel):
     drug_name: str
     section: str

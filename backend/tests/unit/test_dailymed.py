@@ -1,10 +1,8 @@
-from unittest.mock import patch
 
 import httpx
 import pytest
 import respx
 
-from app.config import settings
 from app.services.dailymed import (
     LeafletSection,
     _fetch_set_id,
@@ -17,10 +15,10 @@ from app.services.dailymed import (
 
 
 @pytest.fixture(autouse=True)
-def reset_cache():
-    clear_dailymed_cache()
+async def reset_cache():
+    await clear_dailymed_cache()
     yield
-    clear_dailymed_cache()
+    await clear_dailymed_cache()
 
 
 DAILYMED_BASE = "https://dailymed.nlm.nih.gov/dailymed/services/v2"
@@ -275,19 +273,17 @@ async def test_cache_hit_calls_http_exactly_once():
 
 
 @respx.mock
-async def test_expired_cache_calls_http_again():
-    """An entry past its TTL is evicted and the API is called again."""
+async def test_cache_miss_after_manual_eviction_calls_http_again():
+    """After evicting the cache key, the next call hits the API again."""
     respx.get(SEARCH_URL).mock(
         return_value=httpx.Response(200, json=MOCK_SEARCH_RESPONSE)
     )
     respx.get(SPL_URL).mock(return_value=httpx.Response(200, text=MOCK_SPL_XML))
 
-    with patch("app.services.dailymed.time.time", return_value=0.0):
-        await fetch_leaflet_sections("lisinopril")
-
-    past_ttl = float(settings.dailymed_cache_ttl_seconds + 1)
-    with patch("app.services.dailymed.time.time", return_value=past_ttl):
-        await fetch_leaflet_sections("lisinopril")
+    await fetch_leaflet_sections("lisinopril")
+    # Evict the cache key — simulates TTL expiry or restart
+    await clear_dailymed_cache()
+    await fetch_leaflet_sections("lisinopril")
 
     # 2 HTTP calls per fetch × 2 fetches = 4
     assert respx.calls.call_count == 4
@@ -302,7 +298,7 @@ async def test_clear_dailymed_cache_resets_state():
     respx.get(SPL_URL).mock(return_value=httpx.Response(200, text=MOCK_SPL_XML))
 
     await fetch_leaflet_sections("lisinopril")
-    clear_dailymed_cache()
+    await clear_dailymed_cache()
     await fetch_leaflet_sections("lisinopril")
 
     assert respx.calls.call_count == 4
