@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.models.schemas import ComponentHealth, HealthResponse
 from app.services import embedder, vector_store
+from app.services.llm_client import _cerebras_breaker, _groq_breaker
 
 router = APIRouter()
 
@@ -31,7 +32,23 @@ async def health() -> JSONResponse:
         detail=None if has_key else "no API key configured",
     )
 
-    components = {"chroma": chroma, "embedder": emb, "llm": llm}
+    groq_open = not await _groq_breaker.allow_request()
+    cerebras_open = not await _cerebras_breaker.allow_request()
+    if groq_open and cerebras_open:
+        llm_routing = ComponentHealth(status="degraded", detail="both_open")
+    elif groq_open:
+        llm_routing = ComponentHealth(status="degraded", detail="groq_open")
+    elif cerebras_open:
+        llm_routing = ComponentHealth(status="degraded", detail="cerebras_open")
+    else:
+        llm_routing = ComponentHealth(status="ok")
+
+    components = {
+        "chroma": chroma,
+        "embedder": emb,
+        "llm": llm,
+        "llm_routing": llm_routing,
+    }
     overall: str = (
         "ok" if all(c.status == "ok" for c in components.values()) else "degraded"
     )

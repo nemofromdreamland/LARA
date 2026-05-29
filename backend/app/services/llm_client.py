@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 from collections.abc import AsyncGenerator
@@ -12,6 +13,11 @@ from app.services.circuit_breaker import RedisCircuitBreaker
 from app.utils import get_request_id
 
 logger = logging.getLogger(__name__)
+
+
+class ServiceUnavailableError(Exception):
+    """Raised when all LLM providers have open circuit breakers."""
+
 
 _CITED_RE = re.compile(r"\nCITED:\s*(.+)$", re.IGNORECASE)
 
@@ -60,9 +66,15 @@ SYSTEM_PROMPT = (
 _MODEL_GROQ = "llama-3.3-70b-versatile"
 _MODEL_CEREBRAS = "llama3.3-70b"
 
-# Redis-backed breaker — state is shared across all uvicorn workers.
-# Trips after 3 consecutive Groq failures; resets after 60 s cooldown.
+# Redis-backed breakers — state is shared across all uvicorn workers.
+# Groq: trips after 3 consecutive failures; resets after 60 s cooldown.
 _groq_breaker = RedisCircuitBreaker("groq", failure_threshold=3, cooldown_seconds=60.0)
+# Cerebras fallback: trips after configurable threshold; longer cooldown.
+_cerebras_breaker = RedisCircuitBreaker(
+    "cerebras",
+    failure_threshold=settings.cerebras_cb_failure_threshold,
+    cooldown_seconds=settings.cerebras_cb_cooldown_seconds,
+)
 
 # Singleton Groq client — reuses the underlying httpx connection pool across requests.
 _groq_client: AsyncGroq | None = None
@@ -194,7 +206,8 @@ async def generate_stream(
     hist = history or []
 
     if settings.llm_provider == LLMProvider.cerebras:
-        yield await _call_cerebras(prompt, history=hist)
+        async for chunk in _stream_cerebras(prompt, history=hist):
+            yield chunk
         return
 
     if not await _groq_breaker.allow_request():
@@ -202,7 +215,8 @@ async def generate_stream(
             "LLM fallback activated — Groq circuit open (stream)",
             extra={"request_id": rid},
         )
-        yield await _call_cerebras(prompt, history=hist)
+        async for chunk in _stream_cerebras(prompt, history=hist):
+            yield chunk
         return
 
     try:
@@ -216,7 +230,8 @@ async def generate_stream(
             exc,
             extra={"request_id": rid},
         )
-        yield await _call_cerebras(prompt, history=hist)
+        async for chunk in _stream_cerebras(prompt, history=hist):
+            yield chunk
 
 
 async def _call_groq(
@@ -265,12 +280,13 @@ def _is_cerebras_transient(exc: BaseException) -> bool:
     stop=stop_after_attempt(3),
     reraise=True,
 )
-async def _call_cerebras(
+async def _call_cerebras_http(
     prompt: str,
     system_prompt: str = SYSTEM_PROMPT,
     temperature: float = 0.0,
     history: list[dict] | None = None,
 ) -> str:
+    """Raw Cerebras HTTP call with tenacity retries. Use _call_cerebras instead."""
     payload = {
         "model": _MODEL_CEREBRAS,
         "messages": _build_messages(system_prompt, history or [], prompt),
@@ -287,3 +303,35 @@ async def _call_cerebras(
 
     response.raise_for_status()
     return response.json()["choices"][0]["message"]["content"]
+
+
+async def _call_cerebras(
+    prompt: str,
+    system_prompt: str = SYSTEM_PROMPT,
+    temperature: float = 0.0,
+    history: list[dict] | None = None,
+) -> str:
+    """Cerebras call with CB guard. Raises ServiceUnavailableError if CB open."""
+    if not await _cerebras_breaker.allow_request():
+        raise ServiceUnavailableError("Cerebras circuit breaker is open")
+    try:
+        result = await _call_cerebras_http(prompt, system_prompt, temperature, history)
+        await _cerebras_breaker.record_success()
+        return result
+    except Exception as exc:
+        if _is_cerebras_transient(exc):
+            await _cerebras_breaker.record_failure()
+        raise
+
+
+async def _stream_cerebras(
+    prompt: str,
+    system_prompt: str = SYSTEM_PROMPT,
+    temperature: float = 0.0,
+    history: list[dict] | None = None,
+) -> AsyncGenerator[str, None]:
+    """Cerebras fallback streaming: fetches full response then yields word-by-word."""
+    text = await _call_cerebras(prompt, system_prompt, temperature, history)
+    for token in re.findall(r"\S+\s*", text):
+        yield token
+        await asyncio.sleep(0.02)

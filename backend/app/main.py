@@ -18,7 +18,11 @@ from app.limiter import limiter
 from app.routes import chat, health, interactions, session, upload
 from app.services import session_store
 from app.services.embedder import preload_model
-from app.services.llm_client import close_cerebras_client, init_cerebras_client
+from app.services.llm_client import (
+    ServiceUnavailableError,
+    close_cerebras_client,
+    init_cerebras_client,
+)
 from app.services.reranker import preload_reranker
 from app.utils import request_id_var, run_sync
 
@@ -106,6 +110,16 @@ app.state.limiter = limiter
 @app.exception_handler(RateLimitExceeded)
 async def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
     return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
+
+
+@app.exception_handler(ServiceUnavailableError)
+async def _service_unavailable_handler(
+    request: Request, exc: ServiceUnavailableError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "LLM service unavailable — all providers are down"},
+    )
 
 
 # SlowAPIMiddleware must be added before RequestIDMiddleware (outermost first).

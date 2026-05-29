@@ -7,7 +7,9 @@ import pytest
 import app.services.llm_client as llm_module
 from app.services.llm_client import (
     SYSTEM_PROMPT,
+    ServiceUnavailableError,
     _build_prompt,
+    _call_cerebras,
     call_llm,
     generate,
     generate_stream,
@@ -15,12 +17,8 @@ from app.services.llm_client import (
 
 
 @pytest.fixture(autouse=True)
-def reset_groq_singleton():
-    """Reset the module-level Groq singleton before each test.
-
-    Without this, the first test to call _get_groq_client() caches a client,
-    and subsequent tests that patch AsyncGroq never see their mock used.
-    """
+def reset_singletons():
+    """Reset module-level singletons before each test."""
     llm_module._groq_client = None
     yield
     llm_module._groq_client = None
@@ -311,15 +309,19 @@ async def test_generate_stream_yields_tokens(
 
 
 @patch("app.services.llm_client.settings")
+@patch("app.services.llm_client._cerebras_breaker")
 @patch("app.services.llm_client.httpx.AsyncClient")
-@patch("app.services.llm_client._groq_breaker")
-async def test_generate_stream_cerebras_yields_single_chunk(
-    mock_breaker, mock_client_cls, mock_settings
+async def test_generate_stream_cerebras_yields_incremental_tokens(
+    mock_client_cls, mock_cb, mock_settings
 ):
+    """Cerebras streaming now yields multiple word-level tokens, not one big chunk."""
     from app.config import LLMProvider
 
     mock_settings.llm_provider = LLMProvider.cerebras
     mock_settings.cerebras_api_key = "fake-cerebras-key"
+    mock_cb.allow_request = AsyncMock(return_value=True)
+    mock_cb.record_success = AsyncMock()
+    mock_cb.record_failure = AsyncMock()
 
     mock_http = _mock_cerebras_client("Full answer.")
     mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_http)
@@ -329,24 +331,29 @@ async def test_generate_stream_cerebras_yields_single_chunk(
     async for t in generate_stream("ctx", "q"):
         tokens.append(t)
 
-    assert tokens == ["Full answer."]
+    assert len(tokens) > 1
+    assert "".join(tokens) == "Full answer."
 
 
 @patch("app.services.llm_client.settings")
+@patch("app.services.llm_client._cerebras_breaker")
 @patch("app.services.llm_client.httpx.AsyncClient")
 @patch("app.services.llm_client.AsyncGroq")
 @patch("app.services.llm_client._groq_breaker")
 async def test_generate_stream_falls_back_on_rate_limit(
-    mock_breaker, mock_groq_cls, mock_client_cls, mock_settings
+    mock_groq_breaker, mock_groq_cls, mock_client_cls, mock_cerebras_cb, mock_settings
 ):
     from app.config import LLMProvider
 
     mock_settings.llm_provider = LLMProvider.groq
     mock_settings.groq_api_key = "fake-key"
     mock_settings.cerebras_api_key = "fake-cerebras-key"
-    mock_breaker.allow_request = AsyncMock(return_value=True)
-    mock_breaker.record_failure = AsyncMock()
-    mock_breaker.record_success = AsyncMock()
+    mock_groq_breaker.allow_request = AsyncMock(return_value=True)
+    mock_groq_breaker.record_failure = AsyncMock()
+    mock_groq_breaker.record_success = AsyncMock()
+    mock_cerebras_cb.allow_request = AsyncMock(return_value=True)
+    mock_cerebras_cb.record_success = AsyncMock()
+    mock_cerebras_cb.record_failure = AsyncMock()
 
     mock_groq_cls.return_value.chat.completions.create = AsyncMock(
         side_effect=groq_sdk.RateLimitError(
@@ -362,8 +369,9 @@ async def test_generate_stream_falls_back_on_rate_limit(
     async for t in generate_stream("ctx", "q"):
         tokens.append(t)
 
-    assert tokens == ["Cerebras fallback."]
-    mock_breaker.record_failure.assert_called_once()
+    assert len(tokens) > 1
+    assert "".join(tokens) == "Cerebras fallback."
+    mock_groq_breaker.record_failure.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -443,3 +451,76 @@ async def test_call_llm_passes_temperature(mock_groq_cls, mock_settings):
 
     call_kwargs = mock_client.chat.completions.create.call_args.kwargs
     assert call_kwargs["temperature"] == 0.7
+
+
+# ---------------------------------------------------------------------------
+# Cerebras circuit breaker
+# ---------------------------------------------------------------------------
+
+
+@patch("app.services.llm_client.settings")
+@patch("app.services.llm_client._cerebras_breaker")
+@patch("app.services.llm_client._groq_breaker")
+async def test_both_circuit_breakers_open_raises_service_unavailable(
+    mock_groq_breaker, mock_cerebras_cb, mock_settings
+):
+    """When both CBs are open, ServiceUnavailableError is raised immediately."""
+    from app.config import LLMProvider
+
+    mock_settings.llm_provider = LLMProvider.groq
+    mock_settings.groq_api_key = "fake-key"
+    mock_groq_breaker.allow_request = AsyncMock(return_value=False)
+    mock_cerebras_cb.allow_request = AsyncMock(return_value=False)
+
+    with pytest.raises(ServiceUnavailableError):
+        await generate("ctx", "q")
+
+
+@patch("app.services.llm_client._cerebras_breaker")
+@patch("app.services.llm_client._call_cerebras_http")
+async def test_cerebras_cb_records_failure_after_transient_error(mock_http, mock_cb):
+    # Verify _call_cerebras records a CB failure when _call_cerebras_http throws.
+    mock_cb.allow_request = AsyncMock(return_value=True)
+    mock_cb.record_failure = AsyncMock()
+    mock_cb.record_success = AsyncMock()
+
+    fail_response = MagicMock()
+    fail_response.status_code = 503
+    mock_http.side_effect = httpx.HTTPStatusError(
+        "503", request=MagicMock(), response=fail_response
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await _call_cerebras("some prompt")
+
+    mock_cb.record_failure.assert_called_once()
+    mock_cb.record_success.assert_not_called()
+
+
+@patch("app.services.llm_client.settings")
+@patch("app.services.llm_client._cerebras_breaker")
+@patch("app.services.llm_client.httpx.AsyncClient")
+async def test_stream_cerebras_yields_multiple_chunks(
+    mock_client_cls, mock_cb, mock_settings
+):
+    """_stream_cerebras splits the full response into incremental word-level tokens."""
+    from app.config import LLMProvider
+
+    mock_settings.llm_provider = LLMProvider.cerebras
+    mock_settings.cerebras_api_key = "fake-cerebras-key"
+    mock_cb.allow_request = AsyncMock(return_value=True)
+    mock_cb.record_success = AsyncMock()
+    mock_cb.record_failure = AsyncMock()
+
+    mock_http = _mock_cerebras_client("Hello world from Cerebras")
+    mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_http)
+    mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    from app.services.llm_client import _stream_cerebras
+
+    tokens = []
+    async for chunk in _stream_cerebras("some prompt"):
+        tokens.append(chunk)
+
+    assert len(tokens) > 1
+    assert "".join(tokens) == "Hello world from Cerebras"

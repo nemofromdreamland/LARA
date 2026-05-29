@@ -28,6 +28,8 @@ class Settings(BaseSettings):
     upload_rate_limit: str = "5/minute"
     chat_rate_limit: str = "20/minute"
     groq_timeout_seconds: float = 30.0
+    cerebras_cb_failure_threshold: int = 5
+    cerebras_cb_cooldown_seconds: float = 120.0
     thread_pool_workers: int = 8
     embed_pool_workers: int = Field(default=4, ge=1)
     cleanup_interval_seconds: int = Field(default=1800, ge=60)
