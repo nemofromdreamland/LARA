@@ -4,7 +4,9 @@ import time
 from typing import Any
 
 import redis.asyncio as aioredis
+import redis.exceptions
 
+from app.exceptions import StorageUnavailableError
 from app.models.schemas import PrescriptionEntry
 
 logger = logging.getLogger(__name__)
@@ -24,7 +26,12 @@ def _get_redis() -> aioredis.Redis:
 
 async def init_redis(url: str) -> None:
     global _redis
-    client: aioredis.Redis = aioredis.from_url(url, decode_responses=True)
+    client: aioredis.Redis = aioredis.from_url(
+        url,
+        decode_responses=True,
+        socket_connect_timeout=2,
+        socket_timeout=2,
+    )
     await client.ping()  # fail fast if unreachable
     _redis = client
     logger.info("Redis connected: %s", url)
@@ -43,32 +50,44 @@ async def close_redis() -> None:
 async def create_session(session_id: str) -> None:
     from app.config import settings
 
-    r = _get_redis()
-    key = _key(session_id)
-    await r.hset(key, "created_at", json.dumps(time.time()))
-    await r.expire(key, settings.session_ttl_seconds)
+    try:
+        r = _get_redis()
+        key = _key(session_id)
+        await r.hset(key, "created_at", json.dumps(time.time()))
+        await r.expire(key, settings.session_ttl_seconds)
+    except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as exc:
+        raise StorageUnavailableError(str(exc)) from exc
 
 
 async def set_session_data(session_id: str, field: str, value: Any) -> None:
     from app.config import settings
 
-    r = _get_redis()
-    key = _key(session_id)
-    await r.hset(key, field, json.dumps(value))
-    await r.expire(key, settings.session_ttl_seconds)
+    try:
+        r = _get_redis()
+        key = _key(session_id)
+        await r.hset(key, field, json.dumps(value))
+        await r.expire(key, settings.session_ttl_seconds)
+    except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as exc:
+        raise StorageUnavailableError(str(exc)) from exc
 
 
 async def get_session_data(session_id: str, field: str) -> Any | None:
-    r = _get_redis()
-    raw = await r.hget(_key(session_id), field)
-    if raw is None:
-        return None
-    return json.loads(raw)
+    try:
+        r = _get_redis()
+        raw = await r.hget(_key(session_id), field)
+        if raw is None:
+            return None
+        return json.loads(raw)
+    except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as exc:
+        raise StorageUnavailableError(str(exc)) from exc
 
 
 async def session_exists(session_id: str) -> bool:
-    r = _get_redis()
-    return bool(await r.exists(_key(session_id)))
+    try:
+        r = _get_redis()
+        return bool(await r.exists(_key(session_id)))
+    except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as exc:
+        raise StorageUnavailableError(str(exc)) from exc
 
 
 async def delete_session(session_id: str) -> None:
@@ -137,23 +156,29 @@ async def save_job_status(
     missing_leaflets: list[str] | None = None,
     error: str | None = None,
 ) -> None:
-    r = _get_redis()
-    key = _job_key(job_id)
-    payload: dict[str, str] = {
-        "session_id": json.dumps(session_id),
-        "status": json.dumps(status),
-        "drugs_found": json.dumps(drugs_found or []),
-        "missing_leaflets": json.dumps(missing_leaflets or []),
-        "error": json.dumps(error),
-    }
-    await r.hset(key, mapping=payload)
-    await r.expire(key, _JOB_TTL)
+    try:
+        r = _get_redis()
+        key = _job_key(job_id)
+        payload: dict[str, str] = {
+            "session_id": json.dumps(session_id),
+            "status": json.dumps(status),
+            "drugs_found": json.dumps(drugs_found or []),
+            "missing_leaflets": json.dumps(missing_leaflets or []),
+            "error": json.dumps(error),
+        }
+        await r.hset(key, mapping=payload)
+        await r.expire(key, _JOB_TTL)
+    except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as exc:
+        raise StorageUnavailableError(str(exc)) from exc
 
 
 async def get_job_status(job_id: str) -> dict | None:
-    r = _get_redis()
-    key = _job_key(job_id)
-    raw = await r.hgetall(key)
-    if not raw:
-        return None
-    return {k: json.loads(v) for k, v in raw.items()}
+    try:
+        r = _get_redis()
+        key = _job_key(job_id)
+        raw = await r.hgetall(key)
+        if not raw:
+            return None
+        return {k: json.loads(v) for k, v in raw.items()}
+    except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as exc:
+        raise StorageUnavailableError(str(exc)) from exc

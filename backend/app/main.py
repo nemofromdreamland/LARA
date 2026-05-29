@@ -14,6 +14,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import settings
 from app.dependencies import require_api_key
+from app.exceptions import StorageUnavailableError
 from app.limiter import limiter
 from app.routes import chat, health, interactions, session, upload
 from app.services import session_store
@@ -119,6 +120,16 @@ async def _service_unavailable_handler(
     return JSONResponse(
         status_code=503,
         content={"detail": "LLM service unavailable — all providers are down"},
+    )
+
+
+@app.exception_handler(StorageUnavailableError)
+async def _storage_unavailable_handler(
+    request: Request, exc: StorageUnavailableError
+) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Storage unavailable, please try again shortly."},
     )
 
 

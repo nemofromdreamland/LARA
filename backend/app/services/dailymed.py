@@ -30,7 +30,8 @@ async def _cache_get(drug_name: str) -> list | None:
         if raw is None:
             return None
         return json.loads(raw)
-    except Exception:
+    except Exception as exc:
+        logger.warning("DailyMed cache read failed for %r: %s", drug_name, exc)
         return None
 
 
@@ -43,8 +44,8 @@ async def _cache_set(drug_name: str, sections: list) -> None:
             settings.dailymed_cache_ttl_seconds,
             payload,
         )
-    except Exception:
-        pass  # cache write failure is non-fatal
+    except Exception as exc:
+        logger.warning("DailyMed cache write failed for %r: %s", drug_name, exc)
 
 
 async def clear_dailymed_cache() -> None:
