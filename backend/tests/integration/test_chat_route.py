@@ -45,7 +45,7 @@ def test_chat_passes_session_id_and_question(mock_answer, client: TestClient):
         "/chat",
         json={"session_id": _SID, "question": "What is the dosage?"},
     )
-    mock_answer.assert_called_once_with(_SID, "What is the dosage?", [])
+    mock_answer.assert_called_once_with(_SID, "What is the dosage?", [], None)
 
 
 @patch("app.routes.chat.answer", new_callable=AsyncMock)

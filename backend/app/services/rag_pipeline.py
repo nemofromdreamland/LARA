@@ -78,7 +78,7 @@ async def _build_fallback_message(session_id: str) -> str:
 
 
 def _deduplicate_sources(chunks: list[dict]) -> list[Source]:
-    """Return one Source per unique (drug_name, section) pair, preserving relevance order."""
+    """Return one Source per (drug_name, section) pair, preserving relevance order."""
     seen: set[tuple[str, str]] = set()
     sources: list[Source] = []
     for c in chunks:
@@ -92,7 +92,10 @@ def _deduplicate_sources(chunks: list[dict]) -> list[Source]:
 def _filter_sources_by_cited(
     sources: list[Source], cited: list[tuple[str, str]]
 ) -> list[Source]:
-    """Keep only sources the LLM explicitly cited.  Falls back to all sources if cited is empty."""
+    """Keep only sources the LLM explicitly cited.
+
+    Falls back to all sources if cited is empty.
+    """
     if not cited:
         return sources
     cited_set = {(drug, section) for drug, section in cited}
@@ -108,7 +111,8 @@ async def _retrieve_diverse(
     session_id: str,
     drugs: list[str],
 ) -> list[dict]:
-    """Run one retrieval query per drug in parallel, merge, deduplicate, sort by distance.
+    """Run one retrieval query per drug in parallel, merge, deduplicate,
+    sort by distance.
 
     Guarantees at least one chunk per drug when multiple drugs are in the session,
     preventing a single drug from monopolising all top-k slots.
@@ -132,7 +136,10 @@ async def _retrieve_diverse(
 
 
 async def _prepare_context(
-    session_id: str, question: str, history: list[dict] | None = None
+    session_id: str,
+    question: str,
+    history: list[dict] | None = None,
+    embed_executor=None,
 ) -> tuple[list[dict], str] | None:
     """Embed the retrieval query, retrieve chunks, assemble context string.
 
@@ -150,15 +157,19 @@ async def _prepare_context(
         None,
     )
     retrieval_query = f"{last_user_turn} {question}" if last_user_turn else question
-    query_embedding = (await embed([retrieval_query]))[0]
+    query_embedding = (await embed([retrieval_query], embed_executor))[0]
 
     drugs_found, _ = await get_upload_result(session_id)
     if len(drugs_found) > 1:
         # Per-drug retrieval: guarantees representation from every drug in the session.
         raw_chunks = await _retrieve_diverse(query_embedding, session_id, drugs_found)
     else:
-        raw_chunks = await retrieve(query_embedding, session_id, top_k=settings.retrieval_top_k)
-    chunks = [c for c in raw_chunks if c["distance"] < settings.retrieval_distance_threshold]
+        raw_chunks = await retrieve(
+            query_embedding, session_id, top_k=settings.retrieval_top_k
+        )
+    chunks = [
+        c for c in raw_chunks if c["distance"] < settings.retrieval_distance_threshold
+    ]
 
     logger.debug(
         "RAG retrieve: %d raw chunks, %d passed threshold (threshold=%.2f)",
@@ -188,7 +199,10 @@ async def _prepare_context(
 
 
 async def answer(
-    session_id: str, question: str, history: list[dict] | None = None
+    session_id: str,
+    question: str,
+    history: list[dict] | None = None,
+    embed_executor=None,
 ) -> ChatResponse:
     """Run the full RAG query pipeline for *question* scoped to *session_id*.
 
@@ -199,7 +213,7 @@ async def answer(
     4. Generate answer via LLM (hallucination-guarded, with conversation history).
     5. Return ChatResponse with answer + citation-filtered source list.
     """
-    prepared = await _prepare_context(session_id, question, history)
+    prepared = await _prepare_context(session_id, question, history, embed_executor)
     if prepared is None:
         fallback = await _build_fallback_message(session_id)
         return ChatResponse(answer=fallback, sources=[])
@@ -215,7 +229,10 @@ async def answer(
 
 
 async def answer_stream(
-    session_id: str, question: str, history: list[dict] | None = None
+    session_id: str,
+    question: str,
+    history: list[dict] | None = None,
+    embed_executor=None,
 ) -> AsyncGenerator[str, None]:
     """Stream the RAG answer as SSE-ready payloads.
 
@@ -227,7 +244,7 @@ async def answer_stream(
     The frontend is responsible for stripping the trailing CITED: line from
     the accumulated text when it receives the sources event.
     """
-    prepared = await _prepare_context(session_id, question, history)
+    prepared = await _prepare_context(session_id, question, history, embed_executor)
     if prepared is None:
         fallback = await _build_fallback_message(session_id)
         yield fallback

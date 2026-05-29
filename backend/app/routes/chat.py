@@ -15,8 +15,9 @@ router = APIRouter()
 @router.post("/chat", response_model=ChatResponse)
 @limiter.limit(settings.chat_rate_limit)
 async def chat(request: Request, body: ChatRequest) -> ChatResponse:
+    embed_executor = getattr(request.app.state, "embed_executor", None)
     history = [h.model_dump() for h in body.history]
-    return await answer(body.session_id, body.question, history)
+    return await answer(body.session_id, body.question, history, embed_executor)
 
 
 @router.post("/chat/stream")
@@ -30,10 +31,13 @@ async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
       event: done    — end-of-stream sentinel
     """
 
+    embed_executor = getattr(request.app.state, "embed_executor", None)
     history = [h.model_dump() for h in body.history]
 
     async def event_generator() -> AsyncGenerator[str, None]:
-        async for payload in answer_stream(body.session_id, body.question, history):
+        async for payload in answer_stream(
+            body.session_id, body.question, history, embed_executor
+        ):
             if payload == "[DONE]":
                 yield "event: done\ndata: \n\n"
             elif payload.startswith("[SOURCES]"):

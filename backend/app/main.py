@@ -77,6 +77,11 @@ async def lifespan(app: FastAPI):
         thread_name_prefix="lara-blocking",
     )
     asyncio.get_event_loop().set_default_executor(executor)
+    embed_executor = ThreadPoolExecutor(
+        max_workers=settings.embed_pool_workers,
+        thread_name_prefix="lara-embed",
+    )
+    app.state.embed_executor = embed_executor
     await session_store.init_redis(settings.redis_url)
     await init_cerebras_client()
     await run_sync(preload_model)
@@ -89,6 +94,7 @@ async def lifespan(app: FastAPI):
         await session_store.close_redis()
         await close_cerebras_client()
         executor.shutdown(wait=False)
+        embed_executor.shutdown(wait=False)
 
 
 app = FastAPI(title="LARA API", version="0.1.0", lifespan=lifespan)

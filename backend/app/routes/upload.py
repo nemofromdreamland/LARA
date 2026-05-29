@@ -39,6 +39,7 @@ async def _run_ingestion(
     session_id: str,
     text: str,
     rid: str,
+    embed_executor,
 ) -> None:
     """Background task: parse prescription → fetch leaflets → embed → store."""
     try:
@@ -84,7 +85,7 @@ async def _run_ingestion(
                 )
                 missing_drugs.append(drug)
                 continue
-            embeddings = await embed(chunks)
+            embeddings = await embed(chunks, embed_executor)
             await store(chunks, embeddings, metas)
             stored_drugs.append(drug)
 
@@ -145,7 +146,10 @@ async def upload(
     job_id = str(uuid.uuid4())
     await save_job_status(job_id, session_id, "processing")
 
-    background_tasks.add_task(_run_ingestion, job_id, session_id, text, rid)
+    embed_executor = getattr(request.app.state, "embed_executor", None)
+    background_tasks.add_task(
+        _run_ingestion, job_id, session_id, text, rid, embed_executor
+    )
 
     logger.info(
         "upload accepted, job %s started for session %s",

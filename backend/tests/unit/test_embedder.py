@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+
 from app.services.embedder import embed
 
 _EMBEDDING_DIM = 768
@@ -30,6 +32,15 @@ async def test_embed_different_texts_produce_different_vectors():
     a = await embed(["the dog sat on the mat"])
     b = await embed(["quantum entanglement in physics"])
     assert a[0] != b[0]
+
+
+async def test_embed_with_explicit_executor():
+    """embed() accepts a dedicated ThreadPoolExecutor and routes work through it."""
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        result = await embed(["hello world"], executor)
+    assert isinstance(result, list)
+    assert isinstance(result[0], list)
+    assert len(result[0]) == _EMBEDDING_DIM
 
 
 async def test_embed_similar_texts_are_closer():

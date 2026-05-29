@@ -40,6 +40,7 @@ def strip_cited_line(text: str) -> tuple[str, list[tuple[str, str]]]:
             pairs.append((drug.strip().lower(), section.strip().lower()))
     return clean_text, pairs
 
+
 SYSTEM_PROMPT = (
     "You are LARA, a medical information assistant. "
     "Answer ONLY using the context provided below. "

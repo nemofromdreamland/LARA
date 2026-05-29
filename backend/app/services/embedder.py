@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import Executor
 from functools import partial
 
 from sentence_transformers import SentenceTransformer
@@ -27,10 +28,13 @@ def _encode_sync(texts: list[str]) -> list[list[float]]:
     return _get_model().encode(texts, show_progress_bar=False).tolist()
 
 
-async def embed(texts: list[str]) -> list[list[float]]:
+async def embed(
+    texts: list[str], executor: Executor | None = None
+) -> list[list[float]]:
     """Embed texts using NeuML/pubmedbert-base-embeddings (768-dim, local).
 
-    Runs encoding in a thread-pool executor so the async event loop is not blocked.
+    Runs encoding in *executor* (dedicated embed pool when called from the app,
+    falls back to the loop default executor otherwise — keeps tests simple).
     """
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, partial(_encode_sync, texts))
+    return await loop.run_in_executor(executor, partial(_encode_sync, texts))

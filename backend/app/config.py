@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     chat_rate_limit: str = "20/minute"
     groq_timeout_seconds: float = 30.0
     thread_pool_workers: int = 8
+    embed_pool_workers: int = Field(default=4, ge=1)
     cleanup_interval_seconds: int = Field(default=1800, ge=60)
 
     @model_validator(mode="after")
@@ -40,6 +41,15 @@ class Settings(BaseSettings):
             )
         if not self.lara_api_key:
             raise ValueError("lara_api_key must be set.")
+        return self
+
+    @model_validator(mode="after")
+    def _check_embed_pool_workers(self) -> "Settings":
+        if self.embed_pool_workers > self.thread_pool_workers:
+            raise ValueError(
+                f"embed_pool_workers ({self.embed_pool_workers}) must be <= "
+                f"thread_pool_workers ({self.thread_pool_workers})."
+            )
         return self
 
 
