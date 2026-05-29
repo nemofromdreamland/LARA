@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
@@ -54,9 +54,15 @@ class Source(BaseModel):
     section: str
 
 
+class ChatTurn(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=8000)
+
+
 class ChatRequest(BaseModel):
     session_id: str = Field(min_length=36, max_length=36)
-    question: str = Field(max_length=4000)
+    question: str = Field(min_length=2, max_length=4000)
+    history: Annotated[list[ChatTurn], Field(max_length=10)] = []
 
 
 class ChatResponse(BaseModel):

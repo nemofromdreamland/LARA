@@ -14,17 +14,20 @@ services:
     ports:
       - "8000:8000"
     env_file:
-      - .env
+      - ./backend/.env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
     volumes:
       - chroma_data:/data/chroma
+      - hf_cache:/root/.cache/huggingface
     depends_on:
       - redis
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
-      retries: 3
-      start_period: 20s
+      retries: 5
+      start_period: 300s
 
   frontend:
     build:
@@ -33,8 +36,10 @@ services:
     ports:
       - "5173:5173"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   chroma_data:
   redis_data:
+  hf_cache:

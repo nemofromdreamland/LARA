@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
@@ -5,25 +6,21 @@ from collections.abc import AsyncGenerator
 from app.config import settings
 from app.models.schemas import ChatResponse, PrescriptionEntry, Source
 from app.services.embedder import embed
-from app.services.llm_client import generate, generate_stream
+from app.services.llm_client import generate, generate_stream, strip_cited_line
 from app.services.session_store import get_prescription_entries, get_upload_result
-from app.services.vector_store import retrieve
+from app.services.vector_store import retrieve, retrieve_for_drug
 from app.utils import get_request_id
 
 logger = logging.getLogger(__name__)
-
-# Cosine distance threshold for retrieval quality filtering.
-# Chroma's HNSW uses cosine distance (range 0–2); 0 = identical, 2 = opposite.
-# Chunks above this threshold are semantically too distant to be useful context.
-_DISTANCE_THRESHOLD = 0.45
 
 
 def trim_to_budget(chunks_with_scores: list, max_chars: int) -> list:
     """Return the highest-relevance chunks that fit within *max_chars*.
 
-    Sorts ascending by distance (most relevant first), then greedily accumulates
-    chunks until the next one would overflow the budget.  The prescription summary
-    must be counted separately by the caller before invoking this function.
+    Sorts ascending by distance (most relevant first), then uses a full-fill
+    strategy: skips a chunk that would overflow but continues checking remaining
+    smaller chunks.  The prescription summary must be counted separately by the
+    caller before invoking this function.
     """
     rid = get_request_id()
     sorted_chunks = sorted(chunks_with_scores, key=lambda c: c["distance"])
@@ -31,10 +28,9 @@ def trim_to_budget(chunks_with_scores: list, max_chars: int) -> list:
     total = 0
     for chunk in sorted_chunks:
         chunk_len = len(chunk["text"])
-        if total + chunk_len > max_chars:
-            break
-        kept.append(chunk)
-        total += chunk_len
+        if total + chunk_len <= max_chars:
+            kept.append(chunk)
+            total += chunk_len
 
     trimmed = len(sorted_chunks) - len(kept)
     if trimmed:
@@ -70,54 +66,19 @@ def _format_prescription(entries: list[PrescriptionEntry]) -> str:
     return "\n".join(lines)
 
 
-async def answer(session_id: str, question: str) -> ChatResponse:
-    """Run the full RAG query pipeline for *question* scoped to *session_id*.
+async def _build_fallback_message(session_id: str) -> str:
+    """Return the 'no relevant chunks' message enriched with session context."""
+    drugs_found, missing = await get_upload_result(session_id)
+    parts: list[str] = ["This information is not available in the provided leaflets."]
+    if drugs_found:
+        parts.append(f"Indexed leaflets: {', '.join(drugs_found)}.")
+    if missing:
+        parts.append(f"No official leaflet was found for: {', '.join(missing)}.")
+    return " ".join(parts)
 
-    Steps:
-    1. Embed the question.
-    2. Retrieve top-5 chunks from Chroma filtered by session_id.
-    3. Build context string from prescription + retrieved leaflet chunks.
-    4. Generate answer via LLM (hallucination-guarded).
-    5. Return ChatResponse with answer + deduplicated source list.
-    """
-    rid = get_request_id()
-    query_embedding = (await embed([question]))[0]
-    raw_chunks = await retrieve(query_embedding, session_id, top_k=5)
-    chunks = [c for c in raw_chunks if c["distance"] < _DISTANCE_THRESHOLD]
 
-    logger.debug(
-        "RAG retrieve: %d raw chunks, %d passed threshold",
-        len(raw_chunks),
-        len(chunks),
-        extra={"request_id": rid},
-    )
-
-    if not chunks:
-        drugs_found, missing = await get_upload_result(session_id)
-        parts: list[str] = [
-            "This information is not available in the provided leaflets."
-        ]
-        if drugs_found:
-            parts.append(f"Indexed leaflets: {', '.join(drugs_found)}.")
-        if missing:
-            parts.append(f"No official leaflet was found for: {', '.join(missing)}.")
-        return ChatResponse(answer=" ".join(parts), sources=[])
-
-    context_parts: list[str] = []
-    entries = await get_prescription_entries(session_id)
-    prescription_text = _format_prescription(entries) if entries else ""
-    if prescription_text:
-        context_parts.append(prescription_text)
-
-    remaining_budget = settings.max_context_chars - len(prescription_text)
-    chunks = trim_to_budget(chunks, max_chars=max(0, remaining_budget))
-
-    context_parts.extend(
-        f"[{c['drug_name']} — {c['section']}]\n{c['text']}" for c in chunks
-    )
-    context = "\n\n".join(context_parts)
-    answer_text = await generate(context, question)
-
+def _deduplicate_sources(chunks: list[dict]) -> list[Source]:
+    """Return one Source per unique (drug_name, section) pair, preserving relevance order."""
     seen: set[tuple[str, str]] = set()
     sources: list[Source] = []
     for c in chunks:
@@ -125,43 +86,90 @@ async def answer(session_id: str, question: str) -> ChatResponse:
         if key not in seen:
             seen.add(key)
             sources.append(Source(drug_name=c["drug_name"], section=c["section"]))
+    return sources
 
-    return ChatResponse(answer=answer_text, sources=sources)
+
+def _filter_sources_by_cited(
+    sources: list[Source], cited: list[tuple[str, str]]
+) -> list[Source]:
+    """Keep only sources the LLM explicitly cited.  Falls back to all sources if cited is empty."""
+    if not cited:
+        return sources
+    cited_set = {(drug, section) for drug, section in cited}
+    filtered = [
+        s for s in sources if (s.drug_name.lower(), s.section.lower()) in cited_set
+    ]
+    # If citation parsing produced no matches (LLM format drift), return everything.
+    return filtered if filtered else sources
 
 
-async def answer_stream(session_id: str, question: str) -> AsyncGenerator[str, None]:
-    """Stream the RAG answer as SSE-ready payloads.
+async def _retrieve_diverse(
+    query_embedding: list[float],
+    session_id: str,
+    drugs: list[str],
+) -> list[dict]:
+    """Run one retrieval query per drug in parallel, merge, deduplicate, sort by distance.
 
-    Yields:
-      - Raw text tokens while the LLM is generating.
-      - A single ``[SOURCES]{json}`` line once generation is complete.
-      - A final ``[DONE]`` line.
+    Guarantees at least one chunk per drug when multiple drugs are in the session,
+    preventing a single drug from monopolising all top-k slots.
+    """
+    per_drug_k = max(2, settings.retrieval_top_k // len(drugs))
+    per_drug_results = await asyncio.gather(
+        *[
+            retrieve_for_drug(query_embedding, session_id, drug, top_k=per_drug_k)
+            for drug in drugs
+        ]
+    )
+    seen_texts: set[str] = set()
+    merged: list[dict] = []
+    for drug_chunks in per_drug_results:
+        for chunk in drug_chunks:
+            if chunk["text"] not in seen_texts:
+                seen_texts.add(chunk["text"])
+                merged.append(chunk)
+    merged.sort(key=lambda c: c["distance"])
+    return merged
+
+
+async def _prepare_context(
+    session_id: str, question: str, history: list[dict] | None = None
+) -> tuple[list[dict], str] | None:
+    """Embed the retrieval query, retrieve chunks, assemble context string.
+
+    When *history* is provided, the last user turn is appended to *question*
+    to give the embedder richer context for follow-up questions.
+
+    Returns (chunks, context) or None if no chunks pass the distance threshold.
+    The caller is responsible for the no-chunks fallback path.
     """
     rid = get_request_id()
-    query_embedding = (await embed([question]))[0]
-    raw_chunks = await retrieve(query_embedding, session_id, top_k=5)
-    chunks = [c for c in raw_chunks if c["distance"] < _DISTANCE_THRESHOLD]
+    # Enrich the embedding query with the most recent prior exchange so that
+    # follow-up questions ("What about pregnancy?") embed in the right direction.
+    last_user_turn = next(
+        (h["content"] for h in reversed(history or []) if h.get("role") == "user"),
+        None,
+    )
+    retrieval_query = f"{last_user_turn} {question}" if last_user_turn else question
+    query_embedding = (await embed([retrieval_query]))[0]
+
+    drugs_found, _ = await get_upload_result(session_id)
+    if len(drugs_found) > 1:
+        # Per-drug retrieval: guarantees representation from every drug in the session.
+        raw_chunks = await _retrieve_diverse(query_embedding, session_id, drugs_found)
+    else:
+        raw_chunks = await retrieve(query_embedding, session_id, top_k=settings.retrieval_top_k)
+    chunks = [c for c in raw_chunks if c["distance"] < settings.retrieval_distance_threshold]
 
     logger.debug(
-        "RAG stream retrieve: %d raw chunks, %d passed threshold",
+        "RAG retrieve: %d raw chunks, %d passed threshold (threshold=%.2f)",
         len(raw_chunks),
         len(chunks),
+        settings.retrieval_distance_threshold,
         extra={"request_id": rid},
     )
 
     if not chunks:
-        drugs_found, missing = await get_upload_result(session_id)
-        parts: list[str] = [
-            "This information is not available in the provided leaflets."
-        ]
-        if drugs_found:
-            parts.append(f"Indexed leaflets: {', '.join(drugs_found)}.")
-        if missing:
-            parts.append(f"No official leaflet was found for: {', '.join(missing)}.")
-        yield " ".join(parts)
-        yield "[SOURCES]" + json.dumps({"sources": []})
-        yield "[DONE]"
-        return
+        return None
 
     context_parts: list[str] = []
     entries = await get_prescription_entries(session_id)
@@ -176,17 +184,65 @@ async def answer_stream(session_id: str, question: str) -> AsyncGenerator[str, N
         f"[{c['drug_name']} — {c['section']}]\n{c['text']}" for c in chunks
     )
     context = "\n\n".join(context_parts)
+    return chunks, context
 
-    async for token in generate_stream(context, question):
+
+async def answer(
+    session_id: str, question: str, history: list[dict] | None = None
+) -> ChatResponse:
+    """Run the full RAG query pipeline for *question* scoped to *session_id*.
+
+    Steps:
+    1. Embed the question (enriched with last history turn for follow-ups).
+    2. Retrieve top-k chunks from Chroma filtered by session_id.
+    3. Build context string from prescription + retrieved leaflet chunks.
+    4. Generate answer via LLM (hallucination-guarded, with conversation history).
+    5. Return ChatResponse with answer + citation-filtered source list.
+    """
+    prepared = await _prepare_context(session_id, question, history)
+    if prepared is None:
+        fallback = await _build_fallback_message(session_id)
+        return ChatResponse(answer=fallback, sources=[])
+
+    chunks, context = prepared
+    raw_answer = await generate(context, question, history=history)
+    answer_text, cited = strip_cited_line(raw_answer)
+    all_sources = _deduplicate_sources(chunks)
+    return ChatResponse(
+        answer=answer_text,
+        sources=_filter_sources_by_cited(all_sources, cited),
+    )
+
+
+async def answer_stream(
+    session_id: str, question: str, history: list[dict] | None = None
+) -> AsyncGenerator[str, None]:
+    """Stream the RAG answer as SSE-ready payloads.
+
+    Yields:
+      - Raw text tokens while the LLM is generating.
+      - A single ``[SOURCES]{json}`` line once generation is complete.
+      - A final ``[DONE]`` line.
+
+    The frontend is responsible for stripping the trailing CITED: line from
+    the accumulated text when it receives the sources event.
+    """
+    prepared = await _prepare_context(session_id, question, history)
+    if prepared is None:
+        fallback = await _build_fallback_message(session_id)
+        yield fallback
+        yield "[SOURCES]" + json.dumps({"sources": []})
+        yield "[DONE]"
+        return
+
+    chunks, context = prepared
+
+    async for token in generate_stream(context, question, history=history):
         yield token
 
-    seen: set[tuple[str, str]] = set()
-    sources: list[dict] = []
-    for c in chunks:
-        key = (c["drug_name"], c["section"])
-        if key not in seen:
-            seen.add(key)
-            sources.append({"drug_name": c["drug_name"], "section": c["section"]})
-
+    sources = [
+        {"drug_name": s.drug_name, "section": s.section}
+        for s in _deduplicate_sources(chunks)
+    ]
     yield "[SOURCES]" + json.dumps({"sources": sources})
     yield "[DONE]"

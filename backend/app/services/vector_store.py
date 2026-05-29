@@ -106,6 +106,40 @@ async def get_by_section(
     ]
 
 
+async def retrieve_for_drug(
+    query_embedding: list[float],
+    session_id: str,
+    drug_name: str,
+    top_k: int = 3,
+    client: ClientAPI | None = None,
+) -> list[dict]:
+    """Query Chroma for top-*k* chunks scoped to *session_id* AND *drug_name*.
+
+    Used by the per-drug retrieval strategy to guarantee each drug gets
+    representation in the context regardless of global distance ranking.
+    """
+    collection = _get_collection(client)
+    results = await run_sync(
+        collection.query,
+        query_embeddings=[query_embedding],
+        n_results=top_k,
+        where={"$and": [{"session_id": session_id}, {"drug_name": drug_name}]},
+        include=["documents", "metadatas", "distances"],
+    )
+    docs = results["documents"][0]
+    metas = results["metadatas"][0]
+    distances = results["distances"][0]
+    return [
+        {
+            "text": doc,
+            "drug_name": meta["drug_name"],
+            "section": meta["section"],
+            "distance": dist,
+        }
+        for doc, meta, dist in zip(docs, metas, distances)
+    ]
+
+
 async def retrieve(
     query_embedding: list[float],
     session_id: str,

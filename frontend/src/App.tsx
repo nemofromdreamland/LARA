@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { ChatTurn } from './api'
 import { createSession, streamQuestion, uploadPrescription } from './api'
 import ChatPanel from './components/ChatPanel'
 import Mascot from './components/Mascot'
@@ -59,15 +60,23 @@ export default function App() {
 
     const userMsg: Message = { id: `u-${Date.now()}`, role: 'user', content: question }
     const laraId = `l-${Date.now()}`
-    setMessages((prev) => [
-      ...prev,
-      userMsg,
-      { id: laraId, role: 'lara', content: '' },
-    ])
+
+    // Build conversation history from the last 10 non-empty completed turns.
+    // We read from the current messages state (before adding the new user turn).
+    setMessages((prev) => {
+      // history is built inside the setter so we have the latest state snapshot
+      return [...prev, userMsg, { id: laraId, role: 'lara' as const, content: '' }]
+    })
     setPhase('asking')
 
+    // Build history from current messages snapshot (captured before setter runs)
+    const history: ChatTurn[] = messages
+      .filter((m) => m.content.length > 0)
+      .slice(-10)
+      .map((m) => ({ role: m.role === 'lara' ? 'assistant' : 'user', content: m.content }))
+
     try {
-      for await (const event of streamQuestion(sessionId, question)) {
+      for await (const event of streamQuestion(sessionId, question, history)) {
         if (event.type === 'token') {
           setMessages((prev) =>
             prev.map((m) =>
@@ -76,9 +85,12 @@ export default function App() {
           )
         } else if (event.type === 'sources') {
           setMessages((prev) =>
-            prev.map((m) =>
-              m.id === laraId ? { ...m, sources: event.sources } : m,
-            ),
+            prev.map((m) => {
+              if (m.id !== laraId) return m
+              // Strip any trailing CITED: line the LLM appended (citation metadata)
+              const cleanContent = m.content.replace(/\nCITED:\s*.+$/i, '').trimEnd()
+              return { ...m, content: cleanContent, sources: event.sources }
+            }),
           )
         } else if (event.type === 'done') {
           triggerHappy()

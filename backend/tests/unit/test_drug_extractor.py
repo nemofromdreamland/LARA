@@ -247,7 +247,11 @@ def test_extract_entries_five_drugs_polypharmacy():
     entries = extract_prescription_entries(text)
     assert len(entries) == 5
     assert [e.drug_name for e in entries] == [
-        "warfarin", "furosemide", "carvedilol", "spironolactone", "digoxin"
+        "warfarin",
+        "furosemide",
+        "carvedilol",
+        "spironolactone",
+        "digoxin",
     ]
     assert all(e.dosage is not None for e in entries)
     assert all(e.frequency is not None for e in entries)

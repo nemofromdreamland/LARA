@@ -1,4 +1,5 @@
 import logging
+import re
 from collections.abc import AsyncGenerator
 
 import groq as groq_sdk
@@ -12,16 +13,47 @@ from app.utils import get_request_id
 
 logger = logging.getLogger(__name__)
 
+_CITED_RE = re.compile(r"\nCITED:\s*(.+)$", re.IGNORECASE)
+
+
+def strip_cited_line(text: str) -> tuple[str, list[tuple[str, str]]]:
+    """Remove the trailing CITED: line from LLM output and parse it.
+
+    Returns (clean_text, [(drug, section), ...]).
+    If no CITED line is present, returns (text, []).
+    """
+    m = _CITED_RE.search(text)
+    if not m:
+        return text, []
+
+    cited_raw = m.group(1).strip()
+    clean_text = text[: m.start()].rstrip()
+
+    if cited_raw.lower() == "none":
+        return clean_text, []
+
+    pairs: list[tuple[str, str]] = []
+    for entry in cited_raw.split(","):
+        entry = entry.strip()
+        if "/" in entry:
+            drug, _, section = entry.partition("/")
+            pairs.append((drug.strip().lower(), section.strip().lower()))
+    return clean_text, pairs
+
 SYSTEM_PROMPT = (
     "You are LARA, a medical information assistant. "
     "Answer ONLY using the context provided below. "
     "The context includes the patient's prescription and official FDA drug "
-    "leaflet sections. "
+    "leaflet sections. Each section is labelled as [drug_name — section_name]. "
     "If the context does not contain the answer, respond: "
     "'This information is not available in the provided leaflets.' "
     "Never add information from general knowledge. "
-    "Always cite the source "
-    "(e.g. 'According to the Pregnancy section of the sertraline leaflet...')."
+    "Always cite the source inline "
+    "(e.g. 'According to the warnings section of the metformin leaflet...'). "
+    "After your answer, on a new line, write exactly: "
+    "CITED: drug1/section1, drug2/section2 "
+    "listing only the [drug — section] labels you actually drew on. "
+    "If you drew on none, write: CITED: none"
 )
 
 _MODEL_GROQ = "llama-3.3-70b-versatile"
@@ -33,6 +65,23 @@ _groq_breaker = RedisCircuitBreaker("groq", failure_threshold=3, cooldown_second
 
 # Singleton Groq client — reuses the underlying httpx connection pool across requests.
 _groq_client: AsyncGroq | None = None
+
+# Singleton httpx client for Cerebras — avoids per-request TCP+TLS handshake.
+_cerebras_client: httpx.AsyncClient | None = None
+
+
+async def init_cerebras_client() -> None:
+    """Create the shared Cerebras httpx client. Call from app lifespan startup."""
+    global _cerebras_client
+    _cerebras_client = httpx.AsyncClient(timeout=30.0)
+
+
+async def close_cerebras_client() -> None:
+    """Close the shared Cerebras httpx client. Call from app lifespan teardown."""
+    global _cerebras_client
+    if _cerebras_client is not None:
+        await _cerebras_client.aclose()
+        _cerebras_client = None
 
 
 def _get_groq_client() -> AsyncGroq:
@@ -62,8 +111,23 @@ def _build_prompt(context: str, question: str) -> str:
     return f"Context:\n{context}\n\nQuestion: {question}"
 
 
+def _build_messages(
+    system_prompt: str,
+    history: list[dict],
+    current_prompt: str,
+) -> list[dict]:
+    """Assemble the full messages list: system → history turns → current user turn."""
+    messages: list[dict] = [{"role": "system", "content": system_prompt}]
+    messages.extend(history)
+    messages.append({"role": "user", "content": current_prompt})
+    return messages
+
+
 async def call_llm(
-    system_prompt: str, user_message: str, temperature: float = 0.0
+    system_prompt: str,
+    user_message: str,
+    temperature: float = 0.0,
+    history: list[dict] | None = None,
 ) -> str:
     """Generic LLM call with provider routing and circuit breaker.
 
@@ -78,19 +142,20 @@ async def call_llm(
            - Other errors          → re-raise immediately
     """
     rid = get_request_id()
+    hist = history or []
 
     if settings.llm_provider == LLMProvider.cerebras:
-        return await _call_cerebras(user_message, system_prompt, temperature)
+        return await _call_cerebras(user_message, system_prompt, temperature, hist)
 
     if not await _groq_breaker.allow_request():
         logger.info(
             "LLM fallback activated — Groq circuit open",
             extra={"request_id": rid},
         )
-        return await _call_cerebras(user_message, system_prompt, temperature)
+        return await _call_cerebras(user_message, system_prompt, temperature, hist)
 
     try:
-        result = await _call_groq(user_message, system_prompt, temperature)
+        result = await _call_groq(user_message, system_prompt, temperature, hist)
         await _groq_breaker.record_success()
         return result
     except _GROQ_TRANSIENT as exc:
@@ -100,15 +165,21 @@ async def call_llm(
             exc,
             extra={"request_id": rid},
         )
-        return await _call_cerebras(user_message, system_prompt, temperature)
+        return await _call_cerebras(user_message, system_prompt, temperature, hist)
 
 
-async def generate(context: str, question: str) -> str:
+async def generate(
+    context: str, question: str, history: list[dict] | None = None
+) -> str:
     """Generate a RAG answer grounded in *context* for *question*."""
-    return await call_llm(SYSTEM_PROMPT, _build_prompt(context, question))
+    return await call_llm(
+        SYSTEM_PROMPT, _build_prompt(context, question), history=history
+    )
 
 
-async def generate_stream(context: str, question: str) -> AsyncGenerator[str, None]:
+async def generate_stream(
+    context: str, question: str, history: list[dict] | None = None
+) -> AsyncGenerator[str, None]:
     """Stream answer tokens for *context* + *question*.
 
     Yields raw text chunks as they arrive.  Applies the same circuit-breaker
@@ -119,9 +190,10 @@ async def generate_stream(context: str, question: str) -> AsyncGenerator[str, No
     """
     rid = get_request_id()
     prompt = _build_prompt(context, question)
+    hist = history or []
 
     if settings.llm_provider == LLMProvider.cerebras:
-        yield await _call_cerebras(prompt)
+        yield await _call_cerebras(prompt, history=hist)
         return
 
     if not await _groq_breaker.allow_request():
@@ -129,11 +201,11 @@ async def generate_stream(context: str, question: str) -> AsyncGenerator[str, No
             "LLM fallback activated — Groq circuit open (stream)",
             extra={"request_id": rid},
         )
-        yield await _call_cerebras(prompt)
+        yield await _call_cerebras(prompt, history=hist)
         return
 
     try:
-        async for chunk in _stream_groq(prompt):
+        async for chunk in _stream_groq(prompt, history=hist):
             yield chunk
         await _groq_breaker.record_success()
     except _GROQ_TRANSIENT as exc:
@@ -143,35 +215,34 @@ async def generate_stream(context: str, question: str) -> AsyncGenerator[str, No
             exc,
             extra={"request_id": rid},
         )
-        yield await _call_cerebras(prompt)
+        yield await _call_cerebras(prompt, history=hist)
 
 
 async def _call_groq(
-    prompt: str, system_prompt: str = SYSTEM_PROMPT, temperature: float = 0.0
+    prompt: str,
+    system_prompt: str = SYSTEM_PROMPT,
+    temperature: float = 0.0,
+    history: list[dict] | None = None,
 ) -> str:
     client = _get_groq_client()
     response = await client.chat.completions.create(
         model=_MODEL_GROQ,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
-        ],
+        messages=_build_messages(system_prompt, history or [], prompt),
         temperature=temperature,
     )
     return response.choices[0].message.content
 
 
 async def _stream_groq(
-    prompt: str, system_prompt: str = SYSTEM_PROMPT
+    prompt: str,
+    system_prompt: str = SYSTEM_PROMPT,
+    history: list[dict] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Yield text tokens from Groq's streaming API."""
     client = _get_groq_client()
     stream = await client.chat.completions.create(
         model=_MODEL_GROQ,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
-        ],
+        messages=_build_messages(system_prompt, history or [], prompt),
         temperature=0.0,
         stream=True,
     )
@@ -194,20 +265,24 @@ def _is_cerebras_transient(exc: BaseException) -> bool:
     reraise=True,
 )
 async def _call_cerebras(
-    prompt: str, system_prompt: str = SYSTEM_PROMPT, temperature: float = 0.0
+    prompt: str,
+    system_prompt: str = SYSTEM_PROMPT,
+    temperature: float = 0.0,
+    history: list[dict] | None = None,
 ) -> str:
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            "https://api.cerebras.ai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {settings.cerebras_api_key}"},
-            json={
-                "model": _MODEL_CEREBRAS,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": temperature,
-            },
-        )
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
+    payload = {
+        "model": _MODEL_CEREBRAS,
+        "messages": _build_messages(system_prompt, history or [], prompt),
+        "temperature": temperature,
+    }
+    headers = {"Authorization": f"Bearer {settings.cerebras_api_key}"}
+    url = "https://api.cerebras.ai/v1/chat/completions"
+
+    if _cerebras_client is not None:
+        response = await _cerebras_client.post(url, headers=headers, json=payload)
+    else:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, headers=headers, json=payload)
+
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"]

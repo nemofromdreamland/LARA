@@ -73,10 +73,11 @@ async def session_exists(session_id: str) -> bool:
 
 async def delete_session(session_id: str) -> None:
     from app.services.vector_store import delete_session as vs_delete
+    from app.utils import run_sync
 
     r = _get_redis()
     await r.delete(_key(session_id))
-    vs_delete(session_id)
+    await run_sync(vs_delete, session_id)
 
 
 # ── High-level domain wrappers (preserves existing call-sites) ────────────────

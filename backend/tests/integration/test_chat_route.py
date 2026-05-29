@@ -45,7 +45,7 @@ def test_chat_passes_session_id_and_question(mock_answer, client: TestClient):
         "/chat",
         json={"session_id": _SID, "question": "What is the dosage?"},
     )
-    mock_answer.assert_called_once_with(_SID, "What is the dosage?")
+    mock_answer.assert_called_once_with(_SID, "What is the dosage?", [])
 
 
 @patch("app.routes.chat.answer", new_callable=AsyncMock)
@@ -144,15 +144,18 @@ def test_chat_stream_yields_tokens(mock_stream, client: TestClient):
     with client.stream(
         "POST",
         "/chat/stream",
-        json={"session_id": _SID, "question": "q"},
+        json={"session_id": _SID, "question": "What are the side effects?"},
     ) as resp:
         assert resp.status_code == 200
         assert resp.headers["content-type"].startswith("text/event-stream")
         raw = b"".join(resp.iter_bytes()).decode()
 
-    assert "data: Hello " in raw
-    assert "data: world" in raw
-    assert "data: [DONE]" in raw
+    # Tokens are JSON-encoded and sent as "event: token" events.
+    assert "event: token" in raw
+    assert json.dumps("Hello ") in raw
+    assert json.dumps("world") in raw
+    # Sentinel is sent as "event: done".
+    assert "event: done" in raw
 
 
 @patch("app.routes.chat.answer_stream")
@@ -164,11 +167,12 @@ def test_chat_stream_includes_sources_event(mock_stream, client: TestClient):
     with client.stream(
         "POST",
         "/chat/stream",
-        json={"session_id": _SID, "question": "q"},
+        json={"session_id": _SID, "question": "Is it safe during pregnancy?"},
     ) as resp:
         raw = b"".join(resp.iter_bytes()).decode()
 
-    assert "[SOURCES]" in raw
+    # Sources are sent as a dedicated "event: sources" SSE event.
+    assert "event: sources" in raw
     assert "lisinopril" in raw
 
 

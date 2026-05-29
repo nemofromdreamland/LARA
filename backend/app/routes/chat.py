@@ -1,3 +1,4 @@
+import json
 from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Request
@@ -14,7 +15,8 @@ router = APIRouter()
 @router.post("/chat", response_model=ChatResponse)
 @limiter.limit(settings.chat_rate_limit)
 async def chat(request: Request, body: ChatRequest) -> ChatResponse:
-    return await answer(body.session_id, body.question)
+    history = [h.model_dump() for h in body.history]
+    return await answer(body.session_id, body.question, history)
 
 
 @router.post("/chat/stream")
@@ -22,14 +24,22 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
 async def chat_stream(request: Request, body: ChatRequest) -> StreamingResponse:
     """Stream the RAG answer as Server-Sent Events.
 
-    Each SSE event is one of:
-      data: <token>          — a text chunk from the LLM
-      data: [SOURCES]{json}  — sources list (sent once, after generation)
-      data: [DONE]           — end-of-stream sentinel
+    Event types:
+      event: token   — a JSON-encoded text chunk from the LLM
+      event: sources — JSON sources payload (sent once, after generation)
+      event: done    — end-of-stream sentinel
     """
 
+    history = [h.model_dump() for h in body.history]
+
     async def event_generator() -> AsyncGenerator[str, None]:
-        async for payload in answer_stream(body.session_id, body.question):
-            yield f"data: {payload}\n\n"
+        async for payload in answer_stream(body.session_id, body.question, history):
+            if payload == "[DONE]":
+                yield "event: done\ndata: \n\n"
+            elif payload.startswith("[SOURCES]"):
+                yield f"event: sources\ndata: {payload[9:]}\n\n"
+            else:
+                # JSON-encode so newlines in LLM tokens don't corrupt SSE framing
+                yield f"event: token\ndata: {json.dumps(payload)}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

@@ -17,6 +17,7 @@ from app.limiter import limiter
 from app.routes import chat, health, interactions, session, upload
 from app.services import session_store
 from app.services.embedder import preload_model
+from app.services.llm_client import close_cerebras_client, init_cerebras_client
 from app.utils import request_id_var, run_sync
 
 logger = logging.getLogger(__name__)
@@ -54,11 +55,13 @@ async def lifespan(app: FastAPI):
     )
     asyncio.get_event_loop().set_default_executor(executor)
     await session_store.init_redis(settings.redis_url)
+    await init_cerebras_client()
     await run_sync(preload_model)
     try:
         yield
     finally:
         await session_store.close_redis()
+        await close_cerebras_client()
         executor.shutdown(wait=False)
 
 
