@@ -4,7 +4,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pythonjsonlogger.json import JsonFormatter
@@ -13,6 +13,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import settings
+from app.dependencies import require_api_key
 from app.limiter import limiter
 from app.routes import chat, health, interactions, session, upload
 from app.services import session_store
@@ -112,7 +113,7 @@ app.add_middleware(
 )
 
 app.include_router(health.router)
-app.include_router(session.router)
-app.include_router(upload.router)
-app.include_router(chat.router)
-app.include_router(interactions.router)
+app.include_router(session.router, dependencies=[Depends(require_api_key)])
+app.include_router(upload.router, dependencies=[Depends(require_api_key)])
+app.include_router(chat.router, dependencies=[Depends(require_api_key)])
+app.include_router(interactions.router, dependencies=[Depends(require_api_key)])

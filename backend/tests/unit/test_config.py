@@ -26,3 +26,8 @@ def test_ttl_below_minimum_raises():
 def test_ttl_at_minimum_passes():
     s = Settings(groq_api_key="k", session_ttl_seconds=300)
     assert s.session_ttl_seconds == 300
+
+
+def test_lara_api_key_empty_raises():
+    with pytest.raises(ValueError, match="lara_api_key"):
+        Settings(groq_api_key="k", lara_api_key="")

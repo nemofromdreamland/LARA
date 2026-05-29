@@ -3,6 +3,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.services.session_store as _ss
+from app.config import settings
 from app.main import app
 
 
@@ -21,4 +22,4 @@ def _fake_redis():
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(app)
+    return TestClient(app, headers={"X-API-Key": settings.lara_api_key})

@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     llm_provider: LLMProvider = LLMProvider.groq
+    lara_api_key: str = ""
     groq_api_key: str = ""
     cerebras_api_key: str = ""
     chroma_path: str = "./data/chroma"
@@ -37,6 +38,8 @@ class Settings(BaseSettings):
             raise ValueError(
                 "cerebras_api_key must be set when llm_provider is 'cerebras'."
             )
+        if not self.lara_api_key:
+            raise ValueError("lara_api_key must be set.")
         return self
 
 

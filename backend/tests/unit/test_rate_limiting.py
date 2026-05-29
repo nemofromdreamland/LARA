@@ -8,6 +8,7 @@ import fitz
 import pytest
 from fastapi.testclient import TestClient
 
+from app.config import settings
 from app.main import app
 from app.models.schemas import ChatResponse, PrescriptionEntry, Source
 from app.services.dailymed import LeafletSection
@@ -52,7 +53,11 @@ def reset_rate_limiter():
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(app, raise_server_exceptions=False)
+    return TestClient(
+        app,
+        raise_server_exceptions=False,
+        headers={"X-API-Key": settings.lara_api_key},
+    )
 
 
 # ---------------------------------------------------------------------------
