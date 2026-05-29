@@ -16,7 +16,8 @@ class Settings(BaseSettings):
     lara_api_key: str = ""
     groq_api_key: str = ""
     cerebras_api_key: str = ""
-    chroma_path: str = "./data/chroma"
+    chroma_host: str = "localhost"
+    chroma_port: int = 8001
     frontend_origin: str = "http://localhost:5173"
     redis_url: str = "redis://localhost:6379/0"
     session_ttl_seconds: int = Field(default=7200, ge=300)  # min 5 min, default 2 hours

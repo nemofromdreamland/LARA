@@ -7,6 +7,15 @@ services:
       - redis_data:/data
     command: redis-server --appendonly yes
 
+  chroma:
+    image: chromadb/chroma:latest
+    volumes:
+      - chroma_data:/chroma/chroma
+    environment:
+      - IS_PERSISTENT=TRUE
+    ports:
+      - "8001:8000"
+
   backend:
     build:
       context: ./backend
@@ -17,11 +26,13 @@ services:
       - ./backend/.env
     environment:
       - REDIS_URL=redis://redis:6379/0
+      - CHROMA_HOST=chroma
+      - CHROMA_PORT=8000
     volumes:
-      - chroma_data:/data/chroma
       - hf_cache:/root/.cache/huggingface
     depends_on:
       - redis
+      - chroma
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s

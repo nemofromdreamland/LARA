@@ -13,7 +13,7 @@ _client: ClientAPI | None = None
 def _get_client() -> ClientAPI:
     global _client
     if _client is None:
-        _client = chromadb.PersistentClient(path=settings.chroma_path)
+        _client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
     return _client
 
 
