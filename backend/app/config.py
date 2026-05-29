@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     chat_rate_limit: str = "20/minute"
     groq_timeout_seconds: float = 30.0
     thread_pool_workers: int = 8
+    cleanup_interval_seconds: int = Field(default=1800, ge=60)
 
     @model_validator(mode="after")
     def _check_api_key(self) -> "Settings":

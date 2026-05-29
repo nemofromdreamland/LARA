@@ -114,7 +114,7 @@ async def test_delete_session_removes_all_docs(chroma_client):
     await store(["Chunk A."], [_make_embedding(0.1)], [meta], client=chroma_client)
     await store(["Chunk B."], [_make_embedding(0.2)], [meta], client=chroma_client)
 
-    deleted = delete_session("sess-del", client=chroma_client)
+    deleted = await delete_session("sess-del", client=chroma_client)
     assert deleted == 2
 
     results = await retrieve(
@@ -123,8 +123,8 @@ async def test_delete_session_removes_all_docs(chroma_client):
     assert results == []
 
 
-def test_delete_session_nonexistent_returns_zero(chroma_client):
-    deleted = delete_session("ghost-session", client=chroma_client)
+async def test_delete_session_nonexistent_returns_zero(chroma_client):
+    deleted = await delete_session("ghost-session", client=chroma_client)
     assert deleted == 0
 
 
@@ -142,7 +142,7 @@ async def test_delete_session_does_not_affect_other_sessions(chroma_client):
         client=chroma_client,
     )
 
-    delete_session("sess-gone", client=chroma_client)
+    await delete_session("sess-gone", client=chroma_client)
 
     kept = await retrieve(
         _make_embedding(0.5), "sess-keep", top_k=5, client=chroma_client

@@ -56,7 +56,7 @@ async def store(
     )
 
 
-def delete_session(
+async def delete_session(
     session_id: str,
     client: ClientAPI | None = None,
 ) -> int:
@@ -65,11 +65,25 @@ def delete_session(
     Returns the number of documents deleted.
     """
     collection = _get_collection(client)
-    existing = collection.get(where={"session_id": session_id})
+    existing = await run_sync(
+        collection.get, where={"session_id": session_id}, include=[]
+    )
     ids = existing["ids"]
     if ids:
-        collection.delete(ids=ids)
+        await run_sync(collection.delete, ids=ids)
     return len(ids)
+
+
+async def list_session_ids(client: ClientAPI | None = None) -> list[str]:
+    """Return all distinct session_ids present in the collection."""
+    collection = _get_collection(client)
+    results = await run_sync(collection.get, include=["metadatas"])
+    seen: set[str] = set()
+    for meta in results["metadatas"] or []:
+        sid = meta.get("session_id")
+        if sid:
+            seen.add(sid)
+    return list(seen)
 
 
 async def get_by_section(

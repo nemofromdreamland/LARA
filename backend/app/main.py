@@ -46,6 +46,28 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         return response
 
 
+async def _cleanup_loop() -> None:
+    """Periodically delete ChromaDB vectors for sessions that have expired in Redis."""
+    from app.services import vector_store
+    from app.services.session_store import session_exists
+
+    while True:
+        await asyncio.sleep(settings.cleanup_interval_seconds)
+        try:
+            session_ids = await vector_store.list_session_ids()
+            for sid in session_ids:
+                if not await session_exists(sid):
+                    deleted = await vector_store.delete_session(sid)
+                    if deleted:
+                        logger.info(
+                            "cleanup: removed %d vectors for expired session %s",
+                            deleted,
+                            sid,
+                        )
+        except Exception:
+            logger.exception("cleanup: error during orphaned-vector sweep")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _configure_logging()
@@ -57,9 +79,12 @@ async def lifespan(app: FastAPI):
     await session_store.init_redis(settings.redis_url)
     await init_cerebras_client()
     await run_sync(preload_model)
+    cleanup_task = asyncio.create_task(_cleanup_loop())
     try:
         yield
     finally:
+        cleanup_task.cancel()
+        await asyncio.gather(cleanup_task, return_exceptions=True)
         await session_store.close_redis()
         await close_cerebras_client()
         executor.shutdown(wait=False)
