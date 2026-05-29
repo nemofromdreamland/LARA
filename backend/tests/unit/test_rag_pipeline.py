@@ -1,6 +1,10 @@
-"""Unit tests for rag_pipeline.trim_to_budget."""
+"""Unit tests for rag_pipeline: trim_to_budget, _build_fallback_message, rerank sort."""
 
-from app.services.rag_pipeline import trim_to_budget
+from unittest.mock import patch
+
+import pytest
+
+from app.services.rag_pipeline import _build_fallback_message, trim_to_budget
 
 
 def _chunk(
@@ -120,3 +124,107 @@ def test_empty_input_returns_empty():
 def test_zero_budget_returns_empty():
     chunks = [_chunk("hello", distance=0.1)]
     assert trim_to_budget(chunks, max_chars=0) == []
+
+
+# ---------------------------------------------------------------------------
+# trim_to_budget — rerank_score sort
+# ---------------------------------------------------------------------------
+
+
+def _chunk_reranked(text: str, rerank_score: float, distance: float = 0.3) -> dict:
+    return {
+        "text": text,
+        "distance": distance,
+        "drug_name": "drugA",
+        "section": "dosage",
+        "rerank_score": rerank_score,
+    }
+
+
+def test_trim_to_budget_sorts_by_rerank_score_when_present():
+    chunks = [
+        _chunk_reranked(
+            "A" * 100, rerank_score=0.3, distance=0.1
+        ),  # highest distance-rank but lowest rerank
+        _chunk_reranked("B" * 100, rerank_score=0.9, distance=0.4),  # highest rerank
+        _chunk_reranked("C" * 100, rerank_score=0.6, distance=0.2),
+    ]
+    # budget fits only 2 chunks
+    result = trim_to_budget(chunks, max_chars=220)
+
+    assert len(result) == 2
+    assert result[0]["rerank_score"] == pytest.approx(0.9)
+    assert result[1]["rerank_score"] == pytest.approx(0.6)
+
+
+def test_trim_to_budget_rerank_sort_highest_first():
+    chunks = [
+        _chunk_reranked("X" * 50, rerank_score=0.1),
+        _chunk_reranked("Y" * 50, rerank_score=0.8),
+        _chunk_reranked("Z" * 50, rerank_score=0.5),
+    ]
+    result = trim_to_budget(chunks, max_chars=500)
+
+    scores = [c["rerank_score"] for c in result]
+    assert scores == sorted(scores, reverse=True)
+
+
+# ---------------------------------------------------------------------------
+# _build_fallback_message
+# ---------------------------------------------------------------------------
+
+
+async def test_fallback_message_includes_indexed_drugs():
+    with patch(
+        "app.services.rag_pipeline.get_upload_result",
+        return_value=(["aspirin", "metformin"], []),
+    ):
+        msg = await _build_fallback_message("session-id")
+
+    assert "aspirin, metformin" in msg
+    assert "Drugs indexed:" in msg
+
+
+async def test_fallback_message_includes_missing_drugs():
+    with patch(
+        "app.services.rag_pipeline.get_upload_result",
+        return_value=(["aspirin"], ["ibuprofen"]),
+    ):
+        msg = await _build_fallback_message("session-id")
+
+    assert "ibuprofen" in msg
+    assert "Drugs with no leaflet found:" in msg
+
+
+async def test_fallback_message_suggests_rephrasing():
+    with patch(
+        "app.services.rag_pipeline.get_upload_result",
+        return_value=(["aspirin"], []),
+    ):
+        msg = await _build_fallback_message("session-id")
+
+    assert "Try rephrasing" in msg
+    assert "warnings" in msg
+    assert "dosage" in msg
+    assert "interactions" in msg
+
+
+async def test_fallback_message_empty_lists_show_none():
+    with patch(
+        "app.services.rag_pipeline.get_upload_result",
+        return_value=([], []),
+    ):
+        msg = await _build_fallback_message("session-id")
+
+    assert "Drugs indexed: none" in msg
+    assert "Drugs with no leaflet found: none" in msg
+
+
+async def test_fallback_message_starts_with_user_facing_text():
+    with patch(
+        "app.services.rag_pipeline.get_upload_result",
+        return_value=(["drugA"], []),
+    ):
+        msg = await _build_fallback_message("session-id")
+
+    assert msg.startswith("I couldn't find relevant information")

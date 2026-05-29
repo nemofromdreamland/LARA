@@ -15,7 +15,13 @@ MOCK_ANSWER = ChatResponse(
 )
 
 EMPTY_ANSWER = ChatResponse(
-    answer="This information is not available in the provided leaflets.",
+    answer=(
+        "I couldn't find relevant information in the uploaded leaflets "
+        "for your question. Drugs indexed: none. "
+        "Drugs with no leaflet found: none. "
+        "Try rephrasing your question or ask about a specific section "
+        "(e.g. 'warnings', 'dosage', 'interactions')."
+    ),
     sources=[],
 )
 
@@ -57,7 +63,7 @@ def test_chat_empty_context_returns_not_available(mock_answer, client: TestClien
         json={"session_id": _SID, "question": "Any question"},
     )
     assert response.status_code == 200
-    assert "not available" in response.json()["answer"]
+    assert "I couldn't find relevant information" in response.json()["answer"]
     assert response.json()["sources"] == []
 
 
@@ -116,7 +122,7 @@ async def test_rag_pipeline_no_chunks_skips_llm(
         mock_gen.assert_not_called()
 
     assert response.status_code == 200
-    assert "not available" in response.json()["answer"]
+    assert "I couldn't find relevant information" in response.json()["answer"]
 
 
 # ---------------------------------------------------------------------------

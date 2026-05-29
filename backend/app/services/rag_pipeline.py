@@ -7,6 +7,7 @@ from app.config import settings
 from app.models.schemas import ChatResponse, PrescriptionEntry, Source
 from app.services.embedder import embed
 from app.services.llm_client import generate, generate_stream, strip_cited_line
+from app.services.reranker import rerank
 from app.services.session_store import get_prescription_entries, get_upload_result
 from app.services.vector_store import retrieve, retrieve_for_drug
 from app.utils import get_request_id
@@ -23,7 +24,12 @@ def trim_to_budget(chunks_with_scores: list, max_chars: int) -> list:
     caller before invoking this function.
     """
     rid = get_request_id()
-    sorted_chunks = sorted(chunks_with_scores, key=lambda c: c["distance"])
+    if chunks_with_scores and "rerank_score" in chunks_with_scores[0]:
+        sorted_chunks = sorted(
+            chunks_with_scores, key=lambda c: c["rerank_score"], reverse=True
+        )
+    else:
+        sorted_chunks = sorted(chunks_with_scores, key=lambda c: c["distance"])
     kept: list = []
     total = 0
     for chunk in sorted_chunks:
@@ -69,12 +75,16 @@ def _format_prescription(entries: list[PrescriptionEntry]) -> str:
 async def _build_fallback_message(session_id: str) -> str:
     """Return the 'no relevant chunks' message enriched with session context."""
     drugs_found, missing = await get_upload_result(session_id)
-    parts: list[str] = ["This information is not available in the provided leaflets."]
-    if drugs_found:
-        parts.append(f"Indexed leaflets: {', '.join(drugs_found)}.")
-    if missing:
-        parts.append(f"No official leaflet was found for: {', '.join(missing)}.")
-    return " ".join(parts)
+    indexed = ", ".join(drugs_found) if drugs_found else "none"
+    no_leaflet = ", ".join(missing) if missing else "none"
+    return (
+        "I couldn't find relevant information in the uploaded leaflets "
+        "for your question. "
+        f"Drugs indexed: {indexed}. "
+        f"Drugs with no leaflet found: {no_leaflet}. "
+        "Try rephrasing your question or ask about a specific section "
+        "(e.g. 'warnings', 'dosage', 'interactions')."
+    )
 
 
 def _deduplicate_sources(chunks: list[dict]) -> list[Source]:
@@ -85,7 +95,13 @@ def _deduplicate_sources(chunks: list[dict]) -> list[Source]:
         key = (c["drug_name"], c["section"])
         if key not in seen:
             seen.add(key)
-            sources.append(Source(drug_name=c["drug_name"], section=c["section"]))
+            sources.append(
+                Source(
+                    drug_name=c["drug_name"],
+                    section=c["section"],
+                    rerank_score=c.get("rerank_score"),
+                )
+            )
     return sources
 
 
@@ -181,6 +197,9 @@ async def _prepare_context(
 
     if not chunks:
         return None
+
+    if settings.reranker_enabled:
+        chunks = await rerank(retrieval_query, chunks)
 
     context_parts: list[str] = []
     entries = await get_prescription_entries(session_id)

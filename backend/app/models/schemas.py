@@ -52,6 +52,7 @@ class JobStatusResponse(BaseModel):
 class Source(BaseModel):
     drug_name: str
     section: str
+    rerank_score: float | None = Field(default=None, exclude=True)
 
 
 class ChatTurn(BaseModel):

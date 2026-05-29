@@ -19,6 +19,7 @@ from app.routes import chat, health, interactions, session, upload
 from app.services import session_store
 from app.services.embedder import preload_model
 from app.services.llm_client import close_cerebras_client, init_cerebras_client
+from app.services.reranker import preload_reranker
 from app.utils import request_id_var, run_sync
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,7 @@ async def lifespan(app: FastAPI):
     await session_store.init_redis(settings.redis_url)
     await init_cerebras_client()
     await run_sync(preload_model)
+    await run_sync(preload_reranker)
     cleanup_task = asyncio.create_task(_cleanup_loop())
     try:
         yield

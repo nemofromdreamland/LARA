@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     thread_pool_workers: int = 8
     embed_pool_workers: int = Field(default=4, ge=1)
     cleanup_interval_seconds: int = Field(default=1800, ge=60)
+    reranker_enabled: bool = True
 
     @model_validator(mode="after")
     def _check_api_key(self) -> "Settings":
