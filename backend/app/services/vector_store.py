@@ -29,7 +29,7 @@ def _get_collection(client: ClientAPI | None = None) -> chromadb.Collection:
 
 async def ping() -> bool:
     try:
-        collection = _get_collection()
+        collection = await run_sync(_get_collection)
         await run_sync(collection.count)
         return True
     except Exception:
@@ -47,7 +47,7 @@ async def store(
     Each metadata dict must contain at minimum: session_id, drug_name, section.
     IDs are random UUIDs to guarantee uniqueness across concurrent uploads.
     """
-    collection = _get_collection(client)
+    collection = await run_sync(_get_collection, client)
     ids = [str(uuid4()) for _ in chunks]
     await run_sync(
         collection.add,
@@ -66,7 +66,7 @@ async def delete_session(
 
     Returns the number of documents deleted.
     """
-    collection = _get_collection(client)
+    collection = await run_sync(_get_collection, client)
     existing = await run_sync(
         collection.get, where={"session_id": session_id}, include=[]
     )
@@ -78,7 +78,7 @@ async def delete_session(
 
 async def list_session_ids(client: ClientAPI | None = None) -> list[str]:
     """Return all distinct session_ids present in the collection."""
-    collection = _get_collection(client)
+    collection = await run_sync(_get_collection, client)
     results = await run_sync(collection.get, include=["metadatas"])
     seen: set[str] = set()
     for meta in results["metadatas"] or []:
@@ -100,7 +100,7 @@ async def get_by_section(
     Returns a list of dicts with keys: text, drug_name, section.
     No semantic ranking — pure metadata filter.
     """
-    collection = _get_collection(client)
+    collection = await run_sync(_get_collection, client)
     where: dict = {
         "$and": [
             {"session_id": session_id},
@@ -134,7 +134,7 @@ async def retrieve_for_drug(
     Used by the per-drug retrieval strategy to guarantee each drug gets
     representation in the context regardless of global distance ranking.
     """
-    collection = _get_collection(client)
+    collection = await run_sync(_get_collection, client)
     results = await run_sync(
         collection.query,
         query_embeddings=[query_embedding],
@@ -166,7 +166,7 @@ async def retrieve(
 
     Returns a list of dicts with keys: text, drug_name, section.
     """
-    collection = _get_collection(client)
+    collection = await run_sync(_get_collection, client)
     results = await run_sync(
         collection.query,
         query_embeddings=[query_embedding],

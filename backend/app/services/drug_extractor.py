@@ -26,9 +26,11 @@ _SUFFIX_RE = re.compile(
     r"|semide|farin|lactone|pidem))\b"
 )
 
-# Numbered list items: "1. Acetaminophen"
+# Numbered list items: "1. Acetaminophen" or "1. Hydroxyzine (NOT Hydralazine)"
+# The (?:\([^)]*\))* at the end ignores any trailing parenthetical annotations
+# so the capture group still yields only the intended drug name.
 _NUMBERED_ITEM_RE = re.compile(
-    r"^\d+\.\s+([A-Z][a-zA-Z]{2,}(?:\s+[A-Z][a-zA-Z]{2,})?)\s*$",
+    r"^\d+\.\s+([A-Z][a-zA-Z]{2,}(?:\s+[A-Z][a-zA-Z]{2,})?)\s*(?:\([^)]*\))*\s*$",
     re.MULTILINE,
 )
 
@@ -350,5 +352,10 @@ def extract_prescription_entries(text: str) -> list[PrescriptionEntry]:
             i += 1
 
     if not entries:
+        logger.warning(
+            "extract_prescription_entries: no numbered drug items matched — "
+            "falling back to unstructured name extraction. "
+            "Check for non-standard prescription formatting."
+        )
         return [PrescriptionEntry(drug_name=n) for n in extract_drug_names(text)]
     return entries

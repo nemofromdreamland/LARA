@@ -22,6 +22,28 @@ export async function createSession(): Promise<string> {
   return data.session_id as string
 }
 
+interface JobStatus {
+  job_id: string
+  session_id: string
+  status: 'processing' | 'done' | 'failed'
+  drugs_found: string[]
+  missing_leaflets: string[]
+  error?: string | null
+}
+
+async function pollJobStatus(jobId: string, maxWaitMs = 120_000): Promise<JobStatus> {
+  const deadline = Date.now() + maxWaitMs
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 1000))
+    const res = await fetch(`${BASE}/upload/status/${jobId}`)
+    if (!res.ok) throw new Error('Could not check upload status.')
+    const data: JobStatus = await res.json()
+    if (data.status === 'done') return data
+    if (data.status === 'failed') throw new Error(data.error ?? 'Prescription processing failed.')
+  }
+  throw new Error('Upload timed out. The server may be busy — please try again.')
+}
+
 export async function uploadPrescription(
   sessionId: string,
   file: File,
@@ -37,7 +59,8 @@ export async function uploadPrescription(
     const err = await res.json().catch(() => ({ detail: 'Upload failed' }))
     throw new Error(err.detail ?? 'Upload failed')
   }
-  return res.json()
+  const { job_id } = await res.json()
+  return pollJobStatus(job_id)
 }
 
 export async function askQuestion(
