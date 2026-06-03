@@ -159,6 +159,18 @@ async def _fetch_sections_raw(set_id: str, client: httpx.AsyncClient) -> list[di
 
 
 _SPL_NS = "urn:hl7-org:v3"
+# Collapses any run of whitespace (spaces, tabs, newlines) to a single space.
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _clean_spl_text(raw: str) -> str:
+    """Normalise whitespace in text extracted from SPL XML.
+
+    HL7 SPL documents embed table markup, list numbering, and cross-reference
+    artefacts that produce long runs of whitespace when itertext() is joined.
+    Collapsing these to single spaces keeps chunks coherent.
+    """
+    return _WHITESPACE_RE.sub(" ", raw).strip()
 
 
 def _parse_spl_xml(xml_text: str) -> list[dict]:
@@ -172,8 +184,8 @@ def _parse_spl_xml(xml_text: str) -> list[dict]:
             continue
         loinc_code = code_el.get("code", "")
         text_el = section.find("h:text", ns)
-        text = " ".join(text_el.itertext()).strip() if text_el is not None else ""
-        results.append({"loinc_code": loinc_code, "text": text})
+        raw_text = " ".join(text_el.itertext()) if text_el is not None else ""
+        results.append({"loinc_code": loinc_code, "text": _clean_spl_text(raw_text)})
     return results
 
 
@@ -183,14 +195,22 @@ def _parse_sections(raw: list[dict], drug_name: str) -> list[LeafletSection]:
     for section in raw:
         code = section.get("loinc_code", "")
         text = (section.get("text") or "").strip()
-        if code in LOINC_SECTIONS and text:
-            results.append(
-                LeafletSection(
-                    drug_name=drug_name,
-                    section=LOINC_SECTIONS[code],
-                    text=text,
-                )
+        if not text:
+            continue
+        if code not in LOINC_SECTIONS:
+            logger.debug(
+                "DailyMed: skipping unknown LOINC code %r for drug %r",
+                code,
+                drug_name,
             )
+            continue
+        results.append(
+            LeafletSection(
+                drug_name=drug_name,
+                section=LOINC_SECTIONS[code],
+                text=text,
+            )
+        )
     return results
 
 

@@ -3,7 +3,13 @@ from functools import partial
 
 from sentence_transformers import CrossEncoder
 
-_RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+# BAAI/bge-reranker-base significantly outperforms the MS MARCO MiniLM models
+# on heterogeneous domains (BEIR benchmark), which better suits medical leaflet
+# text that is structurally different from web-search queries.
+_RERANKER_MODEL = "BAAI/bge-reranker-base"
+# MiniLM and BGE cross-encoders have a 512-token window; set max_length so
+# the tokenizer truncates predictably rather than silently dropping tail tokens.
+_MAX_LENGTH = 512
 _reranker: CrossEncoder | None = None
 
 
@@ -15,7 +21,7 @@ def preload_reranker() -> None:
 def _get_reranker() -> CrossEncoder:
     global _reranker
     if _reranker is None:
-        _reranker = CrossEncoder(_RERANKER_MODEL)
+        _reranker = CrossEncoder(_RERANKER_MODEL, max_length=_MAX_LENGTH)
     return _reranker
 
 

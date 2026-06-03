@@ -19,7 +19,9 @@ class ServiceUnavailableError(Exception):
     """Raised when all LLM providers have open circuit breakers."""
 
 
-_CITED_RE = re.compile(r"\nCITED:\s*(.+)$", re.IGNORECASE)
+# MULTILINE so $ anchors to line-end, not string-end; handles one or more
+# trailing blank lines that LLMs frequently append after the CITED: footer.
+_CITED_RE = re.compile(r"\nCITED:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 
 
 def strip_cited_line(text: str) -> tuple[str, list[tuple[str, str]]]:

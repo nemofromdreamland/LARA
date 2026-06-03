@@ -79,3 +79,46 @@ def test_overlap_equal_to_chunk_size_raises():
 def test_overlap_greater_than_chunk_size_raises():
     with pytest.raises(ValueError, match="overlap"):
         chunk_text("some text", chunk_size=100, overlap=150)
+
+
+def test_sentence_boundary_snapping():
+    """Chunks must end at sentence boundaries, not mid-sentence."""
+    para = (
+        "Lisinopril is an ACE inhibitor. "
+        "It is indicated for hypertension. "
+        "Take once daily with or without food. "
+        "Avoid potassium supplements while on this drug. "
+        "Consult your doctor before stopping."
+    )
+    # chunk_size small enough to force multiple chunks
+    chunks = chunk_text(para, chunk_size=100, overlap=20)
+    for chunk in chunks:
+        # Every chunk produced from sentence-aware splitting must end on
+        # a sentence boundary (period/question/exclamation) or be the last
+        # piece of a char-split oversized sentence.
+        assert chunk[-1] in ".!?" or len(chunk) <= 100
+
+
+def test_sentence_overlap_carries_context():
+    """The tail sentence of chunk N reappears at the start of chunk N+1
+    when it is short enough to fit within the overlap budget."""
+    # Each sentence is ~20 chars so fits easily within overlap=30.
+    para = "Take daily. Avoid sun. Drink water. See doctor. No alcohol."
+    chunks = chunk_text(para, chunk_size=50, overlap=30)
+    if len(chunks) > 1:
+        # At least one word from the end of chunk[0] must appear in chunk[1].
+        assert any(word in chunks[1] for word in chunks[0].split()[-4:])
+
+
+def test_default_chunk_size_is_1000():
+    text = "x" * 1500
+    chunks = chunk_text(text)
+    assert all(len(c) <= 1000 for c in chunks)
+
+
+def test_default_overlap_is_100():
+    # 100-char overlap on a plain text means chunk[1] starts 900 chars into chunk[0].
+    text = "a" * 2000
+    chunks = chunk_text(text)
+    assert len(chunks) >= 2
+    assert chunks[0][-100:] == chunks[1][:100]

@@ -1,9 +1,12 @@
+import logging
+
 import httpx
 import pytest
 import respx
 
 from app.services.dailymed import (
     LeafletSection,
+    _clean_spl_text,
     _fetch_set_id,
     _normalize_drug_name,
     _parse_sections,
@@ -176,6 +179,41 @@ def test_parse_sections_returns_leaflet_section_dataclass():
     raw = [{"loinc_code": "34068-7", "text": "Take once daily."}]
     sections = _parse_sections(raw, "lisinopril")
     assert isinstance(sections[0], LeafletSection)
+
+
+def test_parse_sections_logs_unknown_loinc(caplog):
+    raw = [{"loinc_code": "99999-9", "text": "Some other section content."}]
+    with caplog.at_level(logging.DEBUG, logger="app.services.dailymed"):
+        sections = _parse_sections(raw, "lisinopril")
+    assert sections == []
+    assert "99999-9" in caplog.text
+
+
+# ── _clean_spl_text ────────────────────────────────────────────────────────────
+
+
+def test_clean_spl_text_collapses_whitespace():
+    assert _clean_spl_text("word1  \t  word2\n\nword3") == "word1 word2 word3"
+
+
+def test_clean_spl_text_strips_leading_trailing():
+    assert _clean_spl_text("  hello world  ") == "hello world"
+
+
+def test_clean_spl_text_single_space_unchanged():
+    assert _clean_spl_text("already clean") == "already clean"
+
+
+def test_parse_spl_xml_text_is_normalised():
+    xml = """<?xml version="1.0"?>
+<document xmlns="urn:hl7-org:v3">
+  <section>
+    <code code="34067-9"/>
+    <text><paragraph>Word1   Word2\n\nWord3</paragraph></text>
+  </section>
+</document>"""
+    result = _parse_spl_xml(xml)
+    assert result[0]["text"] == "Word1 Word2 Word3"
 
 
 # ── fetch_leaflet_sections (end-to-end) ───────────────────────────────────────

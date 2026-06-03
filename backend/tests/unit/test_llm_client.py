@@ -13,6 +13,7 @@ from app.services.llm_client import (
     call_llm,
     generate,
     generate_stream,
+    strip_cited_line,
 )
 
 
@@ -39,6 +40,53 @@ def test_system_prompt_enforces_grounding():
     assert "ONLY" in SYSTEM_PROMPT
     assert "not available in the provided leaflets" in SYSTEM_PROMPT
     assert "cite the source" in SYSTEM_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# strip_cited_line
+# ---------------------------------------------------------------------------
+
+
+def test_strip_cited_line_parses_pairs():
+    text = "Some answer.\nCITED: metformin/warnings, aspirin/dosage"
+    clean, pairs = strip_cited_line(text)
+    assert clean == "Some answer."
+    assert ("metformin", "warnings") in pairs
+    assert ("aspirin", "dosage") in pairs
+
+
+def test_strip_cited_line_none_returns_empty_pairs():
+    text = "Some answer.\nCITED: none"
+    clean, pairs = strip_cited_line(text)
+    assert clean == "Some answer."
+    assert pairs == []
+
+
+def test_strip_cited_line_no_cited_returns_original():
+    text = "Some answer with no footer."
+    clean, pairs = strip_cited_line(text)
+    assert clean == text
+    assert pairs == []
+
+
+def test_strip_cited_line_trailing_blank_lines():
+    """Trailing newlines after CITED: must not prevent parsing (MULTILINE fix)."""
+    text = "Some answer.\nCITED: metformin/warnings\n\n"
+    clean, pairs = strip_cited_line(text)
+    assert ("metformin", "warnings") in pairs
+    assert clean == "Some answer."
+
+
+def test_strip_cited_line_single_trailing_newline():
+    text = "Answer.\nCITED: drugA/dosage\n"
+    clean, pairs = strip_cited_line(text)
+    assert ("druga", "dosage") in pairs
+
+
+def test_strip_cited_line_lowercases_pairs():
+    text = "Answer.\nCITED: Metformin/Warnings"
+    _, pairs = strip_cited_line(text)
+    assert pairs == [("metformin", "warnings")]
 
 
 # ---------------------------------------------------------------------------

@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     session_ttl_seconds: int = Field(default=7200, ge=300)  # min 5 min, default 2 hours
     max_context_chars: int = 32_000
     retrieval_distance_threshold: float = Field(default=0.65, ge=0.0, le=2.0)
-    retrieval_top_k: int = Field(default=5, ge=1, le=20)
+    retrieval_top_k: int = Field(default=8, ge=1, le=20)
     dailymed_cache_ttl_seconds: int = 86_400
     upload_rate_limit: str = "5/minute"
     chat_rate_limit: str = "20/minute"

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import math
 from collections.abc import AsyncGenerator
 
 from app.config import settings
@@ -133,7 +134,7 @@ async def _retrieve_diverse(
     Guarantees at least one chunk per drug when multiple drugs are in the session,
     preventing a single drug from monopolising all top-k slots.
     """
-    per_drug_k = max(2, settings.retrieval_top_k // len(drugs))
+    per_drug_k = max(2, math.ceil(settings.retrieval_top_k / len(drugs)))
     per_drug_results = await asyncio.gather(
         *[
             retrieve_for_drug(query_embedding, session_id, drug, top_k=per_drug_k)
