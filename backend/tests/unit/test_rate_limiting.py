@@ -17,8 +17,6 @@ from app.services.dailymed import LeafletSection
 # Shared fixtures / helpers
 # ---------------------------------------------------------------------------
 
-_SID = "00000000-0000-0000-0000-000000000001"
-
 MOCK_ENTRIES = [
     PrescriptionEntry(drug_name="aspirin", dosage="100mg", frequency="once daily")
 ]
@@ -42,15 +40,6 @@ def _make_pdf() -> bytes:
     return doc.tobytes()
 
 
-@pytest.fixture(autouse=True)
-def reset_rate_limiter():
-    """Clear in-memory limiter counters before every test."""
-    from app.limiter import limiter
-
-    limiter._storage.reset()
-    yield
-
-
 @pytest.fixture
 def client() -> TestClient:
     return TestClient(
@@ -60,20 +49,26 @@ def client() -> TestClient:
     )
 
 
+@pytest.fixture
+def session_id(client: TestClient) -> str:
+    """Create a real session so verify_session_owner passes."""
+    resp = client.post("/session")
+    assert resp.status_code == 200
+    return resp.json()["session_id"]
+
+
 # ---------------------------------------------------------------------------
 # Upload rate limiting
 # ---------------------------------------------------------------------------
 
 
-def test_upload_allows_five_requests(client: TestClient):
-    # Pipeline runs in the background; route handler only validates PDF and
-    # returns 202, so no service mocks are needed for rate limit checks.
+def test_upload_allows_five_requests(client: TestClient, session_id: str):
     pdf = _make_pdf()
 
     for i in range(5):
         res = client.post(
             "/upload",
-            data={"session_id": f"sess-{i}"},
+            data={"session_id": session_id},
             files={"file": ("rx.pdf", io.BytesIO(pdf), "application/pdf")},
         )
         assert res.status_code == 202, (
@@ -81,38 +76,38 @@ def test_upload_allows_five_requests(client: TestClient):
         )
 
 
-def test_upload_blocks_sixth_request(client: TestClient):
+def test_upload_blocks_sixth_request(client: TestClient, session_id: str):
     pdf = _make_pdf()
 
-    for i in range(5):
+    for _ in range(5):
         client.post(
             "/upload",
-            data={"session_id": f"sess-{i}"},
+            data={"session_id": session_id},
             files={"file": ("rx.pdf", io.BytesIO(pdf), "application/pdf")},
         )
 
     res = client.post(
         "/upload",
-        data={"session_id": "sess-overflow"},
+        data={"session_id": session_id},
         files={"file": ("rx.pdf", io.BytesIO(pdf), "application/pdf")},
     )
     assert res.status_code == 429
 
 
-def test_upload_429_body_has_detail_key(client: TestClient):
+def test_upload_429_body_has_detail_key(client: TestClient, session_id: str):
     """Drive the limit to exhaustion and verify the JSON shape."""
     pdf = _make_pdf()
 
-    for i in range(5):
+    for _ in range(5):
         client.post(
             "/upload",
-            data={"session_id": f"sess-{i}"},
+            data={"session_id": session_id},
             files={"file": ("rx.pdf", io.BytesIO(pdf), "application/pdf")},
         )
 
     res = client.post(
         "/upload",
-        data={"session_id": "sess-overflow"},
+        data={"session_id": session_id},
         files={"file": ("rx.pdf", io.BytesIO(pdf), "application/pdf")},
     )
     assert res.status_code == 429
@@ -134,13 +129,13 @@ def _make_stream(*payloads: str):
 
 
 @patch("app.routes.chat.answer", new_callable=AsyncMock)
-def test_chat_allows_twenty_requests(mock_answer, client: TestClient):
+def test_chat_allows_twenty_requests(mock_answer, client: TestClient, session_id: str):
     mock_answer.return_value = MOCK_ANSWER
 
     for i in range(20):
         res = client.post(
             "/chat",
-            json={"session_id": _SID, "question": f"Question {i}"},
+            json={"session_id": session_id, "question": f"Question {i}"},
         )
         assert res.status_code == 200, (
             f"Request {i + 1} unexpectedly blocked: {res.text}"
@@ -148,23 +143,27 @@ def test_chat_allows_twenty_requests(mock_answer, client: TestClient):
 
 
 @patch("app.routes.chat.answer", new_callable=AsyncMock)
-def test_chat_blocks_twenty_first_request(mock_answer, client: TestClient):
+def test_chat_blocks_twenty_first_request(
+    mock_answer, client: TestClient, session_id: str
+):
     mock_answer.return_value = MOCK_ANSWER
 
     for i in range(20):
-        client.post("/chat", json={"session_id": _SID, "question": f"Question {i}"})
+        client.post(
+            "/chat", json={"session_id": session_id, "question": f"Question {i}"}
+        )
 
-    res = client.post("/chat", json={"session_id": _SID, "question": "overflow"})
+    res = client.post("/chat", json={"session_id": session_id, "question": "overflow"})
     assert res.status_code == 429
 
 
 @patch("app.routes.chat.answer", new_callable=AsyncMock)
-def test_chat_429_body_has_detail_key(mock_answer, client: TestClient):
+def test_chat_429_body_has_detail_key(mock_answer, client: TestClient, session_id: str):
     mock_answer.return_value = MOCK_ANSWER
 
     for i in range(20):
-        client.post("/chat", json={"session_id": _SID, "question": f"q{i}"})
+        client.post("/chat", json={"session_id": session_id, "question": f"q{i}"})
 
-    res = client.post("/chat", json={"session_id": _SID, "question": "overflow"})
+    res = client.post("/chat", json={"session_id": session_id, "question": "overflow"})
     assert res.status_code == 429
     assert "detail" in res.json()

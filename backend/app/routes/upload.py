@@ -5,14 +5,17 @@ import uuid
 from fastapi import (
     APIRouter,
     BackgroundTasks,
+    Depends,
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
 )
 
 from app.config import settings
+from app.dependencies import require_api_key, verify_session_owner
 from app.limiter import limiter
 from app.models.schemas import JobStatusResponse, UploadJobResponse
 from app.services.embedder import embed
@@ -119,7 +122,9 @@ async def upload(
     background_tasks: BackgroundTasks,
     session_id: str = Form(...),
     file: UploadFile = File(...),
+    caller_hash: str = Depends(require_api_key),
 ) -> UploadJobResponse:
+    await verify_session_owner(session_id, caller_hash)
     rid = get_request_id()
 
     if file.content_type != "application/pdf":
@@ -162,10 +167,19 @@ async def upload(
 
 
 @router.get("/upload/status/{job_id}", response_model=JobStatusResponse)
-async def upload_status(job_id: str) -> JobStatusResponse:
+async def upload_status(
+    job_id: str,
+    session_id: str = Query(...),
+    caller_hash: str = Depends(require_api_key),
+) -> JobStatusResponse:
+    await verify_session_owner(session_id, caller_hash)
     data = await get_job_status(job_id)
     if data is None:
         raise HTTPException(status_code=404, detail="Job not found.")
+    if data["session_id"] != session_id:
+        raise HTTPException(
+            status_code=403, detail="Job belongs to a different session."
+        )
     return JobStatusResponse(
         job_id=job_id,
         session_id=data["session_id"],

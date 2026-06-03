@@ -47,6 +47,14 @@ async def close_redis() -> None:
 # ── Low-level generic interface ──────────────────────────────────────────────
 
 
+async def save_session_owner(session_id: str, owner_hash: str) -> None:
+    await set_session_data(session_id, "owner_hash", owner_hash)
+
+
+async def get_session_owner(session_id: str) -> str | None:
+    return await get_session_data(session_id, "owner_hash")
+
+
 async def create_session(session_id: str) -> None:
     from app.config import settings
 
