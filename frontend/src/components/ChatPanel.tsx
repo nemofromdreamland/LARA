@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
 import type { Message } from '../App'
 import MessageBubble from './MessageBubble'
 
@@ -6,6 +6,7 @@ interface ChatPanelProps {
   messages: Message[]
   onSend: (question: string) => void
   disabled: boolean
+  textareaRef?: RefObject<HTMLTextAreaElement>
 }
 
 const SUGGESTIONS = [
@@ -15,15 +16,24 @@ const SUGGESTIONS = [
   'What warnings should I know about?',
 ]
 
-export default function ChatPanel({ messages, onSend, disabled }: ChatPanelProps) {
+export default function ChatPanel({ messages, onSend, disabled, textareaRef }: ChatPanelProps) {
   const [input, setInput] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const localInputRef = useRef<HTMLTextAreaElement>(null)
+  const inputRef = textareaRef ?? localInputRef
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  // Cross-browser textarea auto-grow
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = el.scrollHeight + 'px'
+  }, [input])
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -42,27 +52,26 @@ export default function ChatPanel({ messages, onSend, disabled }: ChatPanelProps
 
   function useSuggestion(s: string) {
     if (disabled) return
-    setInput(s)
-    inputRef.current?.focus()
+    onSend(s)
   }
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto py-4 px-2 flex flex-col gap-4">
+      <div className="flex-1 overflow-y-auto py-4 px-2 flex flex-col gap-4" aria-live="polite" aria-atomic="false">
         {messages.map((m) => (
           <MessageBubble key={m.id} message={m} />
         ))}
 
         {/* Thinking indicator — shown as a LARA bubble while disabled */}
         {disabled && (
-          <div className="flex items-start gap-2 fade-up">
+          <div className="flex items-start gap-2 fade-up" aria-label="LARA is thinking">
             <div className="w-2 flex-shrink-0" />
-            <div className="bg-surface-lowest rounded-4xl rounded-tl-lg shadow-ambient px-5 py-4">
+            <div className="bg-surface-lowest dark:bg-surface-lowest-d rounded-4xl rounded-tl-lg shadow-ambient px-5 py-4">
               <div className="flex gap-2">
-                <div className="typing-dot" />
-                <div className="typing-dot" />
-                <div className="typing-dot" />
+                <div className="typing-dot" aria-hidden="true" />
+                <div className="typing-dot" aria-hidden="true" />
+                <div className="typing-dot" aria-hidden="true" />
               </div>
             </div>
           </div>
@@ -71,14 +80,14 @@ export default function ChatPanel({ messages, onSend, disabled }: ChatPanelProps
         <div ref={bottomRef} />
       </div>
 
-      {/* Suggestion chips — shown only when no questions asked yet */}
-      {messages.length === 1 && !disabled && (
+      {/* Suggestion chips — shown after each LARA response while input is empty */}
+      {messages.length > 0 && messages[messages.length - 1].role === 'lara' && !input && !disabled && (
         <div className="px-2 pb-2 flex gap-2 flex-wrap">
           {SUGGESTIONS.map((s) => (
             <button
               key={s}
               onClick={() => useSuggestion(s)}
-              className="text-xs font-medium px-3 py-1.5 rounded-full bg-surface-low text-secondary hover:bg-secondary-container hover:text-navy transition-colors"
+              className="text-xs font-medium px-3 py-1.5 rounded-full bg-surface-low dark:bg-surface-low-d text-secondary dark:text-secondary-d hover:bg-secondary-container dark:hover:bg-secondary-container-d hover:text-navy dark:hover:text-navy-d transition-colors"
             >
               {s}
             </button>
@@ -89,7 +98,7 @@ export default function ChatPanel({ messages, onSend, disabled }: ChatPanelProps
       {/* Input bar */}
       <form
         onSubmit={handleSubmit}
-        className="flex items-end gap-3 p-3 bg-surface-low rounded-4xl"
+        className="flex items-end gap-3 p-3 bg-surface-low dark:bg-surface-low-d rounded-4xl"
       >
         <textarea
           ref={inputRef}
@@ -100,14 +109,14 @@ export default function ChatPanel({ messages, onSend, disabled }: ChatPanelProps
           rows={1}
           placeholder="Ask LARA anything about your prescription…"
           className="
-            flex-1 bg-transparent resize-none outline-none text-sm text-on-surface
-            placeholder-secondary/60 leading-relaxed max-h-32 py-1.5
+            flex-1 bg-transparent resize-none outline-none text-sm text-on-surface dark:text-on-surface-d
+            placeholder-secondary/60 dark:placeholder-secondary-d/60 leading-relaxed max-h-32 py-1.5
             disabled:opacity-50
           "
-          style={{ fieldSizing: 'content' } as React.CSSProperties}
         />
         <button
           type="submit"
+          aria-label="Send message"
           disabled={!input.trim() || disabled}
           className="
             flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center

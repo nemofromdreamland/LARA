@@ -1,5 +1,12 @@
 const BASE = '/api'
 
+export class SessionExpiredError extends Error {
+  constructor() {
+    super('Your session has expired. Starting a new one…')
+    this.name = 'SessionExpiredError'
+  }
+}
+
 export interface Source {
   drug_name: string
   section: string
@@ -31,11 +38,17 @@ interface JobStatus {
   error?: string | null
 }
 
-async function pollJobStatus(jobId: string, maxWaitMs = 120_000): Promise<JobStatus> {
+async function pollJobStatus(jobId: string, sessionId: string, maxWaitMs = 120_000, signal?: AbortSignal): Promise<JobStatus> {
   const deadline = Date.now() + maxWaitMs
   while (Date.now() < deadline) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
     await new Promise((resolve) => setTimeout(resolve, 1000))
-    const res = await fetch(`${BASE}/upload/status/${jobId}`)
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+    const res = await fetch(
+      `${BASE}/upload/status/${jobId}?session_id=${encodeURIComponent(sessionId)}`,
+      { signal },
+    )
+    if (res.status === 410) throw new SessionExpiredError()
     if (!res.ok) throw new Error('Could not check upload status.')
     const data: JobStatus = await res.json()
     if (data.status === 'done') return data
@@ -47,11 +60,13 @@ async function pollJobStatus(jobId: string, maxWaitMs = 120_000): Promise<JobSta
 export async function uploadPrescription(
   sessionId: string,
   file: File,
+  signal?: AbortSignal,
 ): Promise<{ drugs_found: string[]; missing_leaflets: string[]; status: string }> {
   const form = new FormData()
   form.append('session_id', sessionId)
   form.append('file', file)
-  const res = await fetch(`${BASE}/upload`, { method: 'POST', body: form })
+  const res = await fetch(`${BASE}/upload`, { method: 'POST', body: form, signal })
+  if (res.status === 410) throw new SessionExpiredError()
   if (res.status === 429) {
     throw new Error("You're sending requests too quickly. Please wait a moment and try again.")
   }
@@ -60,43 +75,35 @@ export async function uploadPrescription(
     throw new Error(err.detail ?? 'Upload failed')
   }
   const { job_id } = await res.json()
-  return pollJobStatus(job_id)
+  return pollJobStatus(job_id, sessionId, 120_000, signal)
 }
 
-export async function askQuestion(
-  sessionId: string,
-  question: string,
-  history: ChatTurn[] = [],
-): Promise<{ answer: string; sources: Source[] }> {
-  const res = await fetch(`${BASE}/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ session_id: sessionId, question, history }),
-  })
-  if (!res.ok) throw new Error('Chat request failed')
-  return res.json()
-}
 
 export async function* streamQuestion(
   sessionId: string,
   question: string,
   history: ChatTurn[] = [],
+  signal?: AbortSignal,
 ): AsyncGenerator<StreamEvent> {
   const res = await fetch(`${BASE}/chat/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session_id: sessionId, question, history }),
+    signal,
   })
+  if (res.status === 410) throw new SessionExpiredError()
   if (res.status === 429) {
     throw new Error("You're sending requests too quickly. Please wait a moment and try again.")
   }
   if (!res.ok) throw new Error('Stream request failed')
 
-  const reader = res.body!.getReader()
+  if (!res.body) throw new Error('No response body from server.')
+  const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
 
   while (true) {
+    if (signal?.aborted) break
     const { done, value } = await reader.read()
     if (done) break
 

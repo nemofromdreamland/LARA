@@ -1,3 +1,10 @@
+/* Self-hosted font — eliminates the Google Fonts CDN dependency */
+@import '@fontsource/lexend/300.css';
+@import '@fontsource/lexend/400.css';
+@import '@fontsource/lexend/500.css';
+@import '@fontsource/lexend/600.css';
+@import '@fontsource/lexend/700.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -13,6 +20,11 @@
     color: #1c1c19;
   }
 
+  .dark body {
+    background-color: #1a1a17;
+    color: #f0ede8;
+  }
+
   /* Scrollbar styling */
   ::-webkit-scrollbar {
     width: 6px;
@@ -23,6 +35,10 @@
   ::-webkit-scrollbar-thumb {
     background: #d3e1f6;
     border-radius: 99px;
+  }
+
+  .dark ::-webkit-scrollbar-thumb {
+    background: #1e2d3d;
   }
 }
 
@@ -92,11 +108,25 @@
   filter: drop-shadow(-2px 0 2px rgba(28, 28, 25, 0.04));
 }
 
+.dark .lara-bubble::before {
+  border-color: transparent #2a2a27 transparent transparent;
+}
+
+@media (max-width: 767px) {
+  .lara-bubble::before {
+    display: none;
+  }
+}
+
 /* ── Upload dropzone ─────────────────────────────────────────────────── */
 
 .dropzone-active {
   border-color: #f39237 !important;
   background-color: #ffe0b2 !important;
+}
+
+.dark .dropzone-active {
+  background-color: #3d2000 !important;
 }
 
 /* ── Fade-in for messages ────────────────────────────────────────────── */

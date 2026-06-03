@@ -1,3 +1,4 @@
+import React from 'react'
 import type { Message } from '../App'
 
 interface Props {
@@ -26,7 +27,7 @@ const SECTION_LABELS: Record<string, string> = {
   warnings: 'Warnings',
 }
 
-export default function MessageBubble({ message }: Props) {
+function MessageBubble({ message }: Props) {
   const isLara = message.role === 'lara'
 
   if (isLara) {
@@ -34,18 +35,18 @@ export default function MessageBubble({ message }: Props) {
       <div className="flex items-start gap-0 fade-up">
         {/* Spacer that aligns with the mascot panel arrow */}
         <div className="w-2 flex-shrink-0" />
-        <div className="lara-bubble bg-surface-lowest rounded-4xl rounded-tl-lg shadow-ambient px-5 py-4 max-w-[85%]">
-          <p className="text-sm leading-relaxed text-on-surface whitespace-pre-wrap">
+        <div className="lara-bubble bg-surface-lowest dark:bg-surface-lowest-d rounded-4xl rounded-tl-lg shadow-ambient px-5 py-4 max-w-[85%]">
+          <p className="text-sm leading-relaxed text-on-surface dark:text-on-surface-d whitespace-pre-wrap">
             {renderContent(message.content)}
           </p>
 
           {/* Source chips */}
           {message.sources && message.sources.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-surface-low">
+            <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-surface-low dark:border-surface-low-d">
               {message.sources.map((s, i) => (
                 <span
                   key={i}
-                  className="text-xs font-medium bg-primary-container text-primary-dark px-2.5 py-1 rounded-full capitalize"
+                  className="text-xs font-medium bg-primary-container dark:bg-primary-container-d text-primary-dark dark:text-primary-text-d px-2.5 py-1 rounded-full capitalize"
                 >
                   {s.drug_name} · {SECTION_LABELS[s.section] ?? s.section}
                 </span>
@@ -60,9 +61,11 @@ export default function MessageBubble({ message }: Props) {
   // User message
   return (
     <div className="flex justify-end fade-up">
-      <div className="bg-navy text-white rounded-4xl rounded-tr-lg px-5 py-3 max-w-[75%]">
+      <div className="bg-navy dark:bg-user-bubble-d text-white dark:text-on-surface-d rounded-4xl rounded-tr-lg px-5 py-3 max-w-[75%]">
         <p className="text-sm leading-relaxed">{message.content}</p>
       </div>
     </div>
   )
 }
+
+export default React.memo(MessageBubble)
