@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
 from pythonjsonlogger.json import JsonFormatter
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -106,6 +107,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="LARA API", version="0.1.0", lifespan=lifespan)
 app.state.limiter = limiter
+
+Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
 
 @app.exception_handler(RateLimitExceeded)

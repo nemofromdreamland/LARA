@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator
 import groq as groq_sdk
 import httpx
 from groq import AsyncGroq
+from prometheus_client import Counter
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.config import LLMProvider, settings
@@ -16,6 +17,13 @@ logger = logging.getLogger(__name__)
 
 class ServiceUnavailableError(Exception):
     """Raised when all LLM providers have open circuit breakers."""
+
+
+_LLM_CALLS = Counter(
+    "lara_llm_provider_calls_total",
+    "LLM provider call outcomes",
+    ["provider", "outcome"],
+)
 
 
 # MULTILINE so $ anchors to line-end, not string-end; handles one or more
@@ -171,9 +179,11 @@ async def call_llm(
     try:
         result = await _call_groq(user_message, system_prompt, temperature, hist)
         await _groq_breaker.record_success()
+        _LLM_CALLS.labels(provider="groq", outcome="success").inc()
         return result
     except _GROQ_TRANSIENT as exc:
         await _groq_breaker.record_failure()
+        _LLM_CALLS.labels(provider="groq", outcome="fallback").inc()
         logger.info(
             "LLM fallback activated — Groq transient error: %s",
             exc,
@@ -315,14 +325,17 @@ async def _call_cerebras(
 ) -> str:
     """Cerebras call with CB guard. Raises ServiceUnavailableError if CB open."""
     if not await _cerebras_breaker.allow_request():
+        _LLM_CALLS.labels(provider="cerebras", outcome="failure").inc()
         raise ServiceUnavailableError("Cerebras circuit breaker is open")
     try:
         result = await _call_cerebras_http(prompt, system_prompt, temperature, history)
         await _cerebras_breaker.record_success()
+        _LLM_CALLS.labels(provider="cerebras", outcome="success").inc()
         return result
     except Exception as exc:
         if _is_cerebras_transient(exc):
             await _cerebras_breaker.record_failure()
+            _LLM_CALLS.labels(provider="cerebras", outcome="failure").inc()
         raise
 
 

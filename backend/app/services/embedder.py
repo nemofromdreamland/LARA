@@ -2,9 +2,16 @@ import asyncio
 from concurrent.futures import Executor
 from functools import partial
 
+from prometheus_client import Histogram
 from sentence_transformers import SentenceTransformer
 
 _MODEL_NAME = "NeuML/pubmedbert-base-embeddings"
+
+_EMBED_DURATION = Histogram(
+    "lara_embed_duration_seconds",
+    "Time spent in the thread pool for each embed() call",
+    ["source"],
+)
 _model: SentenceTransformer | None = None
 
 
@@ -29,7 +36,9 @@ def _encode_sync(texts: list[str]) -> list[list[float]]:
 
 
 async def embed(
-    texts: list[str], executor: Executor | None = None
+    texts: list[str],
+    executor: Executor | None = None,
+    source: str = "upload",
 ) -> list[list[float]]:
     """Embed texts using NeuML/pubmedbert-base-embeddings (768-dim, local).
 
@@ -37,4 +46,5 @@ async def embed(
     falls back to the loop default executor otherwise — keeps tests simple).
     """
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(executor, partial(_encode_sync, texts))
+    with _EMBED_DURATION.labels(source=source).time():
+        return await loop.run_in_executor(executor, partial(_encode_sync, texts))

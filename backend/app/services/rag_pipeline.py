@@ -4,6 +4,8 @@ import logging
 import math
 from collections.abc import AsyncGenerator
 
+from prometheus_client import Counter
+
 from app.config import settings
 from app.models.schemas import ChatResponse, PrescriptionEntry, Source
 from app.services.embedder import embed
@@ -14,6 +16,11 @@ from app.services.vector_store import retrieve, retrieve_for_drug
 from app.utils import get_request_id
 
 logger = logging.getLogger(__name__)
+
+_RETRIEVAL_CHUNKS = Counter(
+    "lara_retrieval_chunks_total",
+    "Chunks passing the distance threshold per query",
+)
 
 
 def trim_to_budget(chunks_with_scores: list, max_chars: int) -> list:
@@ -174,7 +181,9 @@ async def _prepare_context(
         None,
     )
     retrieval_query = f"{last_user_turn} {question}" if last_user_turn else question
-    query_embedding = (await embed([retrieval_query], embed_executor))[0]
+    query_embedding = (await embed([retrieval_query], embed_executor, source="query"))[
+        0
+    ]
 
     drugs_found, _ = await get_upload_result(session_id)
     if len(drugs_found) > 1:
@@ -187,6 +196,7 @@ async def _prepare_context(
     chunks = [
         c for c in raw_chunks if c["distance"] < settings.retrieval_distance_threshold
     ]
+    _RETRIEVAL_CHUNKS.inc(len(chunks))
 
     logger.debug(
         "RAG retrieve: %d raw chunks, %d passed threshold (threshold=%.2f)",

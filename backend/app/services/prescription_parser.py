@@ -4,10 +4,17 @@ import re
 import unicodedata
 
 import groq as groq_sdk
+from prometheus_client import Counter
 
 import app.services.llm_client as llm_client
 from app.models.schemas import PrescriptionEntry
 from app.services.drug_extractor import extract_prescription_entries
+
+_EXTRACTION_TIER = Counter(
+    "lara_extraction_tier_total",
+    "Prescription extraction tier used",
+    ["tier"],
+)
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +121,9 @@ def _strip_markdown(text: str) -> str:
     return _FENCE_RE.sub("", text).strip()
 
 
-async def parse_prescription(text: str) -> list[PrescriptionEntry]:
+async def parse_prescription(
+    text: str, session_id: str | None = None
+) -> list[PrescriptionEntry]:
     """Extract structured medication entries from raw prescription text.
 
     Primary path:
@@ -162,9 +171,14 @@ async def parse_prescription(text: str) -> list[PrescriptionEntry]:
                 )
             )
         if entries:
+            _EXTRACTION_TIER.labels(tier="llm").inc()
             logger.info(
-                "LLM extraction succeeded: %s",
-                [e.drug_name for e in entries],
+                "prescription_extraction",
+                extra={
+                    "extraction_tier": "llm",
+                    "drug_count": len(entries),
+                    "session_id": session_id,
+                },
             )
             return entries
         logger.error(
@@ -185,4 +199,14 @@ async def parse_prescription(text: str) -> list[PrescriptionEntry]:
         )
 
     # Fallback: structured bullet-format extractor (with name-only inner fallback)
-    return extract_prescription_entries(safe_text)
+    entries, tier = extract_prescription_entries(safe_text)
+    _EXTRACTION_TIER.labels(tier=tier).inc()
+    logger.info(
+        "prescription_extraction",
+        extra={
+            "extraction_tier": tier,
+            "drug_count": len(entries),
+            "session_id": session_id,
+        },
+    )
+    return entries

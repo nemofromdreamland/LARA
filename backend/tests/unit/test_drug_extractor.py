@@ -209,14 +209,15 @@ _BULLET_RX = (
 
 
 def test_extract_entries_finds_both_drugs():
-    entries = extract_prescription_entries(_BULLET_RX)
+    entries, tier = extract_prescription_entries(_BULLET_RX)
+    assert tier == "regex"
     assert len(entries) == 2
     assert entries[0].drug_name == "warfarin"
     assert entries[1].drug_name == "furosemide"
 
 
 def test_extract_entries_full_fields_first_drug():
-    entries = extract_prescription_entries(_BULLET_RX)
+    entries, _tier = extract_prescription_entries(_BULLET_RX)
     assert entries[0].dosage == "5mg"
     assert entries[0].frequency == "Once daily"
     assert entries[0].duration == "90 days"
@@ -224,7 +225,7 @@ def test_extract_entries_full_fields_first_drug():
 
 
 def test_extract_entries_full_fields_second_drug():
-    entries = extract_prescription_entries(_BULLET_RX)
+    entries, _tier = extract_prescription_entries(_BULLET_RX)
     assert entries[1].dosage == "40mg"
     assert entries[1].frequency == "Once daily in the morning"
     assert entries[1].duration == "90 days"
@@ -244,7 +245,8 @@ def test_extract_entries_five_drugs_polypharmacy():
         "5. Digoxin\n• Dosage: 0.125mg\n• Frequency: Once daily\n"
         "• Duration: 90 days\n• Instructions: Report nausea immediately\n"
     )
-    entries = extract_prescription_entries(text)
+    entries, tier = extract_prescription_entries(text)
+    assert tier == "regex"
     assert len(entries) == 5
     assert [e.drug_name for e in entries] == [
         "warfarin",
@@ -259,14 +261,15 @@ def test_extract_entries_five_drugs_polypharmacy():
 
 def test_extract_entries_falls_back_to_name_only_for_non_bullet():
     text = "Patient takes Sertraline 50mg daily and Zolpidem 10mg at bedtime."
-    entries = extract_prescription_entries(text)
+    entries, tier = extract_prescription_entries(text)
+    assert tier == "ner"
     names = [e.drug_name for e in entries]
     assert "sertraline" in names
 
 
 def test_extract_entries_missing_fields_are_none():
     text = "1. Digoxin\n• Dosage: 0.125mg\n"
-    entries = extract_prescription_entries(text)
+    entries, _tier = extract_prescription_entries(text)
     assert entries[0].drug_name == "digoxin"
     assert entries[0].dosage == "0.125mg"
     assert entries[0].frequency is None
@@ -276,7 +279,7 @@ def test_extract_entries_missing_fields_are_none():
 
 def test_extract_entries_lowercases_drug_name():
     text = "1. Atorvastatin\n• Dosage: 40mg\n"
-    entries = extract_prescription_entries(text)
+    entries, _tier = extract_prescription_entries(text)
     assert entries[0].drug_name == "atorvastatin"
 
 

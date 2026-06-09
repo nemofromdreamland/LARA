@@ -46,7 +46,7 @@ async def _run_ingestion(
 ) -> None:
     """Background task: parse prescription → fetch leaflets → embed → store."""
     try:
-        entries = await parse_prescription(text)
+        entries = await parse_prescription(text, session_id=session_id)
         if not entries:
             await save_job_status(
                 job_id,

@@ -107,10 +107,13 @@ async def test_parse_ignores_entries_without_drug_name(mock_call_llm):
 @patch("app.services.llm_client.call_llm", new_callable=AsyncMock)
 async def test_parse_falls_back_on_invalid_json(mock_call_llm, mock_entries):
     mock_call_llm.return_value = "not valid json at all"
-    mock_entries.return_value = [
-        PrescriptionEntry(drug_name="ibuprofen"),
-        PrescriptionEntry(drug_name="azithromycin"),
-    ]
+    mock_entries.return_value = (
+        [
+            PrescriptionEntry(drug_name="ibuprofen"),
+            PrescriptionEntry(drug_name="azithromycin"),
+        ],
+        "regex",
+    )
 
     entries = await parse_prescription("prescription")
     assert len(entries) == 2
@@ -122,7 +125,7 @@ async def test_parse_falls_back_on_invalid_json(mock_call_llm, mock_entries):
 @patch("app.services.llm_client.call_llm", new_callable=AsyncMock)
 async def test_parse_falls_back_on_llm_exception(mock_call_llm, mock_entries):
     mock_call_llm.side_effect = RuntimeError("LLM is down")
-    mock_entries.return_value = [PrescriptionEntry(drug_name="lisinopril")]
+    mock_entries.return_value = ([PrescriptionEntry(drug_name="lisinopril")], "ner")
 
     entries = await parse_prescription("prescription")
     assert len(entries) == 1
@@ -136,7 +139,7 @@ async def test_parse_falls_back_when_llm_returns_empty_list(
     mock_call_llm, mock_entries
 ):
     mock_call_llm.return_value = "[]"
-    mock_entries.return_value = [PrescriptionEntry(drug_name="metformin")]
+    mock_entries.return_value = ([PrescriptionEntry(drug_name="metformin")], "regex")
 
     entries = await parse_prescription("prescription")
     assert len(entries) == 1
@@ -149,7 +152,7 @@ async def test_parse_returns_empty_when_both_methods_find_nothing(
     mock_call_llm, mock_entries
 ):
     mock_call_llm.return_value = "[]"
-    mock_entries.return_value = []
+    mock_entries.return_value = ([], "ner")
 
     entries = await parse_prescription("prescription")
     assert entries == []

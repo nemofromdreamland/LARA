@@ -308,7 +308,9 @@ def extract_drug_names(text: str) -> list[str]:
     return result
 
 
-def extract_prescription_entries(text: str) -> list[PrescriptionEntry]:
+def extract_prescription_entries(
+    text: str,
+) -> tuple[list[PrescriptionEntry], str]:
     """Extract full PrescriptionEntry objects from bullet-format prescriptions.
 
     Walks the text line-by-line. Each numbered drug line (matched by
@@ -319,6 +321,9 @@ def extract_prescription_entries(text: str) -> list[PrescriptionEntry]:
     Falls back to name-only extraction (extract_drug_names) when no
     numbered items are found, preserving the previous behaviour for
     non-bullet prescription formats.
+
+    Returns (entries, tier) where tier is "regex" when numbered items were
+    matched or "ner" when the unstructured name extractor was used.
     """
     lines = text.splitlines()
     entries: list[PrescriptionEntry] = []
@@ -357,5 +362,5 @@ def extract_prescription_entries(text: str) -> list[PrescriptionEntry]:
             "falling back to unstructured name extraction. "
             "Check for non-standard prescription formatting."
         )
-        return [PrescriptionEntry(drug_name=n) for n in extract_drug_names(text)]
-    return entries
+        return [PrescriptionEntry(drug_name=n) for n in extract_drug_names(text)], "ner"
+    return entries, "regex"

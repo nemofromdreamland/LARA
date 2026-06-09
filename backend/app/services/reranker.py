@@ -1,7 +1,13 @@
 import asyncio
 from functools import partial
 
+from prometheus_client import Histogram
 from sentence_transformers import CrossEncoder
+
+_RERANK_DURATION = Histogram(
+    "lara_rerank_duration_seconds",
+    "Time spent in the thread pool for each rerank() call",
+)
 
 # BAAI/bge-reranker-base significantly outperforms the MS MARCO MiniLM models
 # on heterogeneous domains (BEIR benchmark), which better suits medical leaflet
@@ -40,9 +46,10 @@ async def rerank(query: str, chunks: list[dict]) -> list[dict]:
         return chunks
     texts = [c["text"] for c in chunks]
     loop = asyncio.get_running_loop()
-    scores: list[float] = await loop.run_in_executor(
-        None, partial(_predict_sync, query, texts)
-    )
+    with _RERANK_DURATION.time():
+        scores: list[float] = await loop.run_in_executor(
+            None, partial(_predict_sync, query, texts)
+        )
     for chunk, score in zip(chunks, scores):
         chunk["rerank_score"] = score
     return sorted(chunks, key=lambda c: c["rerank_score"], reverse=True)
