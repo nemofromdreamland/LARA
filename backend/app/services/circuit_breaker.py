@@ -4,6 +4,19 @@ from enum import Enum
 
 logger = logging.getLogger(__name__)
 
+# Atomically increments the failure counter, stamps the last-failure time, and
+# sets a TTL on both keys so stuck state self-heals after cooldown_seconds * 10.
+# KEYS[1] = failures key, KEYS[2] = last_fail key
+# ARGV[1] = current timestamp (float as string), ARGV[2] = TTL in seconds
+_RECORD_FAILURE_LUA = """
+local failures = redis.call('INCR', KEYS[1])
+redis.call('SET', KEYS[2], ARGV[1])
+local ttl = tonumber(ARGV[2])
+redis.call('EXPIRE', KEYS[1], ttl)
+redis.call('EXPIRE', KEYS[2], ttl)
+return failures
+"""
+
 
 class RedisCircuitBreaker:
     """Circuit breaker whose state is stored in Redis.
@@ -72,8 +85,15 @@ class RedisCircuitBreaker:
     async def record_failure(self) -> None:
         try:
             r = self._get_redis()
-            failures = await r.incr(self._key_failures)
-            await r.set(self._key_last_fail, time.time())
+            ttl = int(self._cooldown * 10)
+            failures = await r.eval(
+                _RECORD_FAILURE_LUA,
+                2,
+                self._key_failures,
+                self._key_last_fail,
+                str(time.time()),
+                str(ttl),
+            )
             logger.warning(
                 "Redis circuit breaker: failure %d/%d for %s",
                 failures,

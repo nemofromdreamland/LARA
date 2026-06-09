@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import re
 from collections.abc import AsyncGenerator
@@ -197,11 +196,12 @@ async def generate_stream(
 ) -> AsyncGenerator[str, None]:
     """Stream answer tokens for *context* + *question*.
 
-    Yields raw text chunks as they arrive.  Applies the same circuit-breaker
-    routing as generate():
-    - Cerebras provider or circuit OPEN → yields full response as one chunk.
-    - Groq (default): streams tokens; on transient error falls back to
-      Cerebras and yields the full response as one chunk.
+    Applies the same circuit-breaker routing as generate():
+    - Groq (default): streams tokens from Groq's native streaming API; on
+      transient error falls back to Cerebras and yields the full response as
+      one chunk.
+    - Cerebras provider or Groq circuit OPEN: yields the full response as one
+      chunk (Cerebras has no native streaming API).
     """
     rid = get_request_id()
     prompt = _build_prompt(context, question)
@@ -332,8 +332,11 @@ async def _stream_cerebras(
     temperature: float = 0.0,
     history: list[dict] | None = None,
 ) -> AsyncGenerator[str, None]:
-    """Cerebras fallback streaming: fetches full response then yields word-by-word."""
+    """Cerebras fallback: fetches the full response and yields it as a single chunk.
+
+    Cerebras has no native streaming API; the previous word-by-word sleep loop added
+    ~0.02 s × word_count of artificial latency with no client benefit.
+    The SSE layer in the route handler emits one token event for the whole text.
+    """
     text = await _call_cerebras(prompt, system_prompt, temperature, history)
-    for token in re.findall(r"\S+\s*", text):
-        yield token
-        await asyncio.sleep(0.02)
+    yield text

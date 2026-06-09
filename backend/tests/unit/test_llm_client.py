@@ -359,10 +359,10 @@ async def test_generate_stream_yields_tokens(
 @patch("app.services.llm_client.settings")
 @patch("app.services.llm_client._cerebras_breaker")
 @patch("app.services.llm_client.httpx.AsyncClient")
-async def test_generate_stream_cerebras_yields_incremental_tokens(
+async def test_generate_stream_cerebras_yields_single_chunk(
     mock_client_cls, mock_cb, mock_settings
 ):
-    """Cerebras streaming now yields multiple word-level tokens, not one big chunk."""
+    """Cerebras yields the full response as one chunk (no native streaming API)."""
     from app.config import LLMProvider
 
     mock_settings.llm_provider = LLMProvider.cerebras
@@ -379,8 +379,7 @@ async def test_generate_stream_cerebras_yields_incremental_tokens(
     async for t in generate_stream("ctx", "q"):
         tokens.append(t)
 
-    assert len(tokens) > 1
-    assert "".join(tokens) == "Full answer."
+    assert tokens == ["Full answer."]
 
 
 @patch("app.services.llm_client.settings")
@@ -417,8 +416,7 @@ async def test_generate_stream_falls_back_on_rate_limit(
     async for t in generate_stream("ctx", "q"):
         tokens.append(t)
 
-    assert len(tokens) > 1
-    assert "".join(tokens) == "Cerebras fallback."
+    assert tokens == ["Cerebras fallback."]
     mock_groq_breaker.record_failure.assert_called_once()
 
 
@@ -548,10 +546,10 @@ async def test_cerebras_cb_records_failure_after_transient_error(mock_http, mock
 @patch("app.services.llm_client.settings")
 @patch("app.services.llm_client._cerebras_breaker")
 @patch("app.services.llm_client.httpx.AsyncClient")
-async def test_stream_cerebras_yields_multiple_chunks(
+async def test_stream_cerebras_yields_single_chunk(
     mock_client_cls, mock_cb, mock_settings
 ):
-    """_stream_cerebras splits the full response into incremental word-level tokens."""
+    """_stream_cerebras yields the full response as one chunk (no native streaming)."""
     from app.config import LLMProvider
 
     mock_settings.llm_provider = LLMProvider.cerebras
@@ -570,5 +568,4 @@ async def test_stream_cerebras_yields_multiple_chunks(
     async for chunk in _stream_cerebras("some prompt"):
         tokens.append(chunk)
 
-    assert len(tokens) > 1
-    assert "".join(tokens) == "Hello world from Cerebras"
+    assert tokens == ["Hello world from Cerebras"]
