@@ -1,4 +1,5 @@
 const BASE = '/api'
+const API_KEY = import.meta.env.VITE_API_KEY as string
 
 export class SessionExpiredError extends Error {
   constructor() {
@@ -23,7 +24,7 @@ export type StreamEvent =
   | { type: 'done' }
 
 export async function createSession(): Promise<string> {
-  const res = await fetch(`${BASE}/session`, { method: 'POST' })
+  const res = await fetch(`${BASE}/session`, { method: 'POST', headers: { 'X-API-Key': API_KEY } })
   if (!res.ok) throw new Error('Failed to create session')
   const data = await res.json()
   return data.session_id as string
@@ -46,7 +47,7 @@ async function pollJobStatus(jobId: string, sessionId: string, maxWaitMs = 120_0
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
     const res = await fetch(
       `${BASE}/upload/status/${jobId}?session_id=${encodeURIComponent(sessionId)}`,
-      { signal },
+      { signal, headers: { 'X-API-Key': API_KEY } },
     )
     if (res.status === 410) throw new SessionExpiredError()
     if (!res.ok) throw new Error('Could not check upload status.')
@@ -65,7 +66,7 @@ export async function uploadPrescription(
   const form = new FormData()
   form.append('session_id', sessionId)
   form.append('file', file)
-  const res = await fetch(`${BASE}/upload`, { method: 'POST', body: form, signal })
+  const res = await fetch(`${BASE}/upload`, { method: 'POST', body: form, signal, headers: { 'X-API-Key': API_KEY } })
   if (res.status === 410) throw new SessionExpiredError()
   if (res.status === 429) {
     throw new Error("You're sending requests too quickly. Please wait a moment and try again.")
@@ -87,7 +88,7 @@ export async function* streamQuestion(
 ): AsyncGenerator<StreamEvent> {
   const res = await fetch(`${BASE}/chat/stream`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
     body: JSON.stringify({ session_id: sessionId, question, history }),
     signal,
   })

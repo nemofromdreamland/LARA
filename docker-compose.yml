@@ -63,10 +63,10 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        - VITE_API_KEY=${LARA_API_KEY}
     ports:
       - "5173:5173"
-    env_file:
-      - ./backend/.env
     depends_on:
       backend:
         condition: service_healthy
