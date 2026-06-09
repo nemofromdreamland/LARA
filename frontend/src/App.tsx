@@ -40,17 +40,20 @@ function MoonIcon() {
 
 export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(null)
+  const [sessionReady, setSessionReady] = useState(false)
   const [phase, setPhase] = useState<Phase>('idle')
   const [drugs, setDrugs] = useState<string[]>([])
   const [messages, setMessages] = useState<Message[]>([])
   const [error, setError] = useState<string | null>(null)
   const [mascotHappy, setMascotHappy] = useState(false)
+  const [mascotError, setMascotError] = useState(false)
   const [dark, setDark] = useState(() => {
     if (typeof window === 'undefined') return false
     const stored = localStorage.getItem('theme')
     return stored === 'dark' || (!stored && window.matchMedia('(prefers-color-scheme: dark)').matches)
   })
   const happyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const errorTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const abortControllerRef = useRef<AbortController | null>(null)
   const chatInputRef = useRef<HTMLTextAreaElement>(null)
@@ -72,8 +75,8 @@ export default function App() {
 
   useEffect(() => {
     createSession()
-      .then(setSessionId)
-      .catch(() => setError('Could not connect to the backend. Is it running?'))
+      .then((id) => { setSessionId(id); setSessionReady(true) })
+      .catch(() => setError('Unable to reach the server. Try refreshing the page.'))
   }, [])
 
   useEffect(() => {
@@ -86,6 +89,7 @@ export default function App() {
     return () => {
       abortControllerRef.current?.abort()
       if (happyTimer.current) clearTimeout(happyTimer.current)
+      if (errorTimer.current) clearTimeout(errorTimer.current)
     }
   }, [])
 
@@ -95,15 +99,25 @@ export default function App() {
     happyTimer.current = setTimeout(() => setMascotHappy(false), 800)
   }, [])
 
+  const triggerMascotError = useCallback(() => {
+    setMascotError(true)
+    if (errorTimer.current) clearTimeout(errorTimer.current)
+    errorTimer.current = setTimeout(() => setMascotError(false), 2000)
+  }, [])
+
   const handleReset = useCallback(() => {
+    if (messages.length > 1 && !window.confirm('Start over? Your conversation will be cleared.')) return
     abortControllerRef.current?.abort()
     abortControllerRef.current = null
     setPhase('idle')
     setDrugs([])
     setMessages([])
     setError(null)
-    createSession().then(setSessionId).catch(() => null)
-  }, [])
+    setSessionReady(false)
+    createSession()
+      .then((id) => { setSessionId(id); setSessionReady(true) })
+      .catch(() => setError('Unable to reach the server. Try refreshing the page.'))
+  }, [messages])
 
   const handleUpload = useCallback(async (file: File) => {
     if (!sessionId) return
@@ -134,8 +148,9 @@ export default function App() {
       if (e instanceof SessionExpiredError) { handleReset(); return }
       setError(e instanceof Error ? e.message : 'Something went wrong during upload.')
       setPhase('idle')
+      triggerMascotError()
     }
-  }, [sessionId, triggerHappy, handleReset])
+  }, [sessionId, triggerHappy, triggerMascotError, handleReset])
 
   const handleQuestion = useCallback(async (question: string) => {
     if (!sessionId || phase === 'asking') return
@@ -197,35 +212,47 @@ export default function App() {
         }
         return [...prev, { id: laraId, role: 'lara' as const, content: 'Sorry, something went wrong on my end. Please try again.' }]
       })
+      triggerMascotError()
       setPhase('ready')
     }
-  }, [sessionId, phase, messages, triggerHappy, handleReset])
+  }, [sessionId, phase, messages, triggerHappy, triggerMascotError, handleReset])
 
-  const mascotState = mascotHappy
-    ? 'happy'
-    : phase === 'uploading'
-      ? 'uploading'
-      : phase === 'asking'
-        ? 'thinking'
-        : 'idle'
+  const mascotState = mascotError
+    ? 'error'
+    : mascotHappy
+      ? 'happy'
+      : phase === 'uploading'
+        ? 'uploading'
+        : phase === 'asking'
+          ? 'thinking'
+          : 'idle'
 
   const inChat = phase === 'ready' || phase === 'asking'
 
   return (
     <div className="min-h-screen bg-surface dark:bg-surface-d font-sans flex flex-col">
+      {/* ── Screen-reader phase announcer ── */}
+      <div role="status" aria-live="polite" className="sr-only">
+        {phase === 'uploading' ? 'Fetching drug leaflets…'
+          : phase === 'ready' ? 'Ready. Ask LARA about your prescription.'
+          : phase === 'asking' ? 'LARA is thinking…'
+          : ''}
+      </div>
+
       {/* ── Header ── */}
       <header className="sticky top-0 z-20 bg-surface/80 dark:bg-surface-d/80 backdrop-blur-sm px-6 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
+          {inChat && <Mascot size={28} state={mascotState} className="md:hidden flex-shrink-0" />}
           <span className="text-lg font-semibold text-navy dark:text-navy-d tracking-tight">LARA</span>
           <span className="text-xs font-medium text-secondary dark:text-secondary-d bg-secondary-container dark:bg-secondary-container-d px-2 py-0.5 rounded-full">
-            medical assistant
+            medical information assistant
           </span>
         </div>
 
         <div className="flex items-center gap-3">
           {inChat && (
             <>
-              <div className="flex gap-1.5 flex-wrap">
+              <div className="flex gap-1.5 flex-wrap min-w-0 overflow-hidden">
                 {drugs.map((d) => (
                   <span
                     key={d}
@@ -237,7 +264,7 @@ export default function App() {
               </div>
               <button
                 onClick={handleReset}
-                className="text-xs font-medium text-secondary dark:text-secondary-d hover:text-navy dark:hover:text-navy-d transition-colors px-3 py-1.5 rounded-full hover:bg-surface-low dark:hover:bg-surface-low-d"
+                className="text-xs font-medium text-secondary dark:text-secondary-d hover:text-navy dark:hover:text-navy-d transition-colors px-3 py-2.5 min-h-[44px] flex items-center rounded-full hover:bg-surface-low dark:hover:bg-surface-low-d"
               >
                 New prescription
               </button>
@@ -251,7 +278,7 @@ export default function App() {
               localStorage.setItem('theme', next ? 'dark' : 'light')
               return next
             })}
-            className="w-8 h-8 flex items-center justify-center rounded-full text-secondary dark:text-secondary-d hover:bg-surface-low dark:hover:bg-surface-low-d transition-colors"
+            className="w-11 h-11 flex items-center justify-center rounded-full text-secondary dark:text-secondary-d hover:bg-surface-low dark:hover:bg-surface-low-d transition-colors"
           >
             {dark ? <SunIcon /> : <MoonIcon />}
           </button>
@@ -260,8 +287,15 @@ export default function App() {
 
       {/* ── Error banner ── */}
       {error && (
-        <div role="alert" className="mx-6 mt-2 px-4 py-3 bg-red-50 dark:bg-red-950 border-l-4 border-red-400 dark:border-red-700 rounded-2xl text-sm text-red-700 dark:text-red-300">
-          {error}
+        <div role="alert" className="mx-6 mt-2 px-4 py-3 bg-red-50 dark:bg-red-950 border-l-4 border-red-400 dark:border-red-700 rounded-2xl text-sm text-red-700 dark:text-red-300 flex items-start justify-between gap-3">
+          <span>{error}</span>
+          <button
+            aria-label="Dismiss error"
+            onClick={() => setError(null)}
+            className="flex-shrink-0 text-red-400 hover:text-red-600 dark:hover:text-red-200 transition-colors leading-none text-base font-medium"
+          >
+            ×
+          </button>
         </div>
       )}
 
@@ -282,19 +316,11 @@ export default function App() {
                   questions.
                 </p>
               </div>
-              {phase === 'uploading' && (
-                <div className="flex gap-2 items-center">
-                  <div className="typing-dot" />
-                  <div className="typing-dot" />
-                  <div className="typing-dot" />
-                  <span className="text-xs text-secondary dark:text-secondary-d ml-1">Reading leaflets…</span>
-                </div>
-              )}
             </div>
 
             {/* Upload card */}
             <div className="bg-surface-lowest dark:bg-surface-lowest-d rounded-5xl shadow-ambient flex flex-col justify-center min-h-[320px]">
-              <UploadZone onUpload={handleUpload} loading={phase === 'uploading'} />
+              <UploadZone onUpload={handleUpload} loading={phase === 'uploading'} sessionReady={sessionReady} />
             </div>
           </div>
         ) : (
@@ -313,7 +339,7 @@ export default function App() {
                 )}
                 {phase !== 'asking' && (
                   <p className="text-xs text-center text-secondary dark:text-secondary-d leading-relaxed">
-                    Ask me anything about your prescription
+                    I only answer from your uploaded drug leaflets.
                   </p>
                 )}
               </div>
@@ -331,6 +357,10 @@ export default function App() {
           </div>
         )}
       </main>
+      {/* ── Disclaimer footer ── */}
+      <footer className="px-6 py-2 text-center text-xs text-secondary/50 dark:text-secondary-d/50 leading-relaxed">
+        LARA provides information from official drug leaflets only. Not a substitute for professional medical advice — always consult your doctor or pharmacist.
+      </footer>
     </div>
   )
 }

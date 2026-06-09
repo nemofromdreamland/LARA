@@ -3,6 +3,7 @@ import { useRef, useState } from 'react'
 interface UploadZoneProps {
   onUpload: (file: File) => void
   loading: boolean
+  sessionReady?: boolean
 }
 
 async function checkPdfMagicBytes(file: File): Promise<boolean> {
@@ -13,7 +14,7 @@ async function checkPdfMagicBytes(file: File): Promise<boolean> {
   return b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46 && b[4] === 0x2d
 }
 
-export default function UploadZone({ onUpload, loading }: UploadZoneProps) {
+export default function UploadZone({ onUpload, loading, sessionReady = true }: UploadZoneProps) {
   const [dragging, setDragging] = useState(false)
   const [fileError, setFileError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -54,23 +55,23 @@ export default function UploadZone({ onUpload, loading }: UploadZoneProps) {
 
   return (
     <div className="h-full flex flex-col items-center justify-center p-8 gap-5">
-      <div
-        role="button"
+      <label
+        htmlFor="prescription-upload"
         tabIndex={0}
         aria-label="Drop prescription PDF here, or press Enter to browse files"
         className={`
           w-full flex-1 flex flex-col items-center justify-center gap-4
           rounded-4xl border-2 border-dashed cursor-pointer transition-all duration-200
           ${dragging ? 'dropzone-active border-primary' : 'border-secondary-container dark:border-secondary-container-d hover:border-primary'}
-          ${loading ? 'opacity-60 pointer-events-none' : ''}
+          ${loading || !sessionReady ? 'opacity-60 pointer-events-none' : ''}
         `}
-        onClick={() => inputRef.current?.click()}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); inputRef.current?.click() } }}
         onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
         onDragLeave={() => setDragging(false)}
         onDrop={handleDrop}
       >
         <input
+          id="prescription-upload"
           ref={inputRef}
           type="file"
           accept="application/pdf"
@@ -113,10 +114,20 @@ export default function UploadZone({ onUpload, loading }: UploadZoneProps) {
             </span>
           </p>
         </div>
-      </div>
+      </label>
 
       {fileError && (
         <p className="text-sm text-red-500 dark:text-red-400 font-medium">{fileError}</p>
+      )}
+
+      {!sessionReady && !loading && (
+        <div className="flex items-center gap-2 text-sm text-secondary dark:text-secondary-d">
+          <svg className="animate-spin w-4 h-4 text-secondary dark:text-secondary-d" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+          </svg>
+          Connecting to server…
+        </div>
       )}
 
       {loading && (
@@ -125,7 +136,7 @@ export default function UploadZone({ onUpload, loading }: UploadZoneProps) {
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
           </svg>
-          Fetching leaflets from DailyMed…
+          Fetching official leaflets from DailyMed…
         </div>
       )}
     </div>

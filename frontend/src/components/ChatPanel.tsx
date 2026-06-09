@@ -19,12 +19,16 @@ const SUGGESTIONS = [
 export default function ChatPanel({ messages, onSend, disabled, textareaRef }: ChatPanelProps) {
   const [input, setInput] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
   const localInputRef = useRef<HTMLTextAreaElement>(null)
   const inputRef = textareaRef ?? localInputRef
 
-  // Auto-scroll to bottom when messages change
+  // Auto-scroll only when already near the bottom so the user can scroll up during streaming
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const el = scrollContainerRef.current
+    if (!el) return
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+    if (nearBottom) bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
   // Cross-browser textarea auto-grow
@@ -53,12 +57,21 @@ export default function ChatPanel({ messages, onSend, disabled, textareaRef }: C
   function useSuggestion(s: string) {
     if (disabled) return
     onSend(s)
+    // Return focus to input so it lands correctly once re-enabled
+    inputRef.current?.focus()
   }
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
+      {/* Screen-reader status announcer — fires once when LARA finishes, not per token */}
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {!disabled && messages.length > 0 && messages[messages.length - 1].role === 'lara'
+          ? 'LARA has responded.'
+          : ''}
+      </div>
+
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto py-4 px-2 flex flex-col gap-4" aria-live="polite" aria-atomic="false">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto py-4 px-2 flex flex-col gap-4" aria-live="polite" aria-atomic="false" aria-relevant="additions">
         {messages.map((m) => (
           <MessageBubble key={m.id} message={m} />
         ))}
@@ -80,20 +93,25 @@ export default function ChatPanel({ messages, onSend, disabled, textareaRef }: C
         <div ref={bottomRef} />
       </div>
 
-      {/* Suggestion chips — shown after each LARA response while input is empty */}
-      {messages.length > 0 && messages[messages.length - 1].role === 'lara' && !input && !disabled && (
+      {/* Suggestion chips — shown only after the first LARA welcome message */}
+      {messages.length === 1 && messages[0].role === 'lara' && !input && !disabled && (
         <div className="px-2 pb-2 flex gap-2 flex-wrap">
           {SUGGESTIONS.map((s) => (
             <button
               key={s}
               onClick={() => useSuggestion(s)}
-              className="text-xs font-medium px-3 py-1.5 rounded-full bg-surface-low dark:bg-surface-low-d text-secondary dark:text-secondary-d hover:bg-secondary-container dark:hover:bg-secondary-container-d hover:text-navy dark:hover:text-navy-d transition-colors"
+              className="text-xs font-medium px-3 py-1.5 min-h-[44px] flex items-center rounded-full bg-surface-low dark:bg-surface-low-d text-secondary dark:text-secondary-d hover:bg-secondary-container dark:hover:bg-secondary-container-d hover:text-navy dark:hover:text-navy-d transition-colors"
             >
               {s}
             </button>
           ))}
         </div>
       )}
+
+      {/* Mobile scope reminder — hidden on desktop where the mascot sidebar says this */}
+      <p className="md:hidden text-xs text-center text-secondary/50 dark:text-secondary-d/50 pb-1">
+        Answering from your prescription's drug leaflets only
+      </p>
 
       {/* Input bar */}
       <form
@@ -119,9 +137,9 @@ export default function ChatPanel({ messages, onSend, disabled, textareaRef }: C
           aria-label="Send message"
           disabled={!input.trim() || disabled}
           className="
-            flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center
-            bg-primary text-white transition-all
-            hover:bg-primary-dark active:scale-95
+            flex-shrink-0 w-11 h-11 rounded-full flex items-center justify-center
+            bg-primary-dark text-white transition-all
+            hover:bg-navy active:scale-95
             disabled:opacity-40 disabled:cursor-not-allowed
           "
         >

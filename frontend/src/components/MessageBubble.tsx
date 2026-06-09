@@ -43,14 +43,21 @@ function MessageBubble({ message }: Props) {
           {/* Source chips */}
           {message.sources && message.sources.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-surface-low dark:border-surface-low-d">
-              {message.sources.map((s, i) => (
-                <span
-                  key={i}
-                  className="text-xs font-medium bg-primary-container dark:bg-primary-container-d text-primary-dark dark:text-primary-text-d px-2.5 py-1 rounded-full capitalize"
-                >
-                  {s.drug_name} · {SECTION_LABELS[s.section] ?? s.section}
-                </span>
-              ))}
+              {message.sources.map((s, i) => {
+                const isBlackBox = s.section === 'boxed_warnings'
+                return (
+                  <span
+                    key={i}
+                    className={`text-xs font-medium px-2.5 py-1 rounded-full capitalize ${
+                      isBlackBox
+                        ? 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
+                        : 'bg-primary-container dark:bg-primary-container-d text-primary-dark dark:text-primary-text-d'
+                    }`}
+                  >
+                    {isBlackBox ? '⚠ ' : ''}{s.drug_name} · {SECTION_LABELS[s.section] ?? s.section}
+                  </span>
+                )
+              })}
             </div>
           )}
         </div>

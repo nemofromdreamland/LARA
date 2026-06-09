@@ -15,6 +15,16 @@
     -moz-osx-font-smoothing: grayscale;
   }
 
+  :focus-visible {
+    outline: 2px solid #904d00;
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  .dark :focus-visible {
+    outline-color: #ffb870;
+  }
+
   body {
     background-color: #fcf9f4;
     color: #1c1c19;
@@ -69,10 +79,18 @@
   100% { transform: scale(1) translateY(0); }
 }
 
+@keyframes mascot-error {
+  0%, 100% { transform: rotate(0deg) translateY(0); }
+  20%       { transform: rotate(-10deg) translateY(4px); }
+  60%       { transform: rotate(10deg) translateY(4px); }
+  80%       { transform: rotate(-5deg) translateY(2px); }
+}
+
 .mascot-idle      { animation: float 3.5s ease-in-out infinite; }
 .mascot-uploading { animation: mascot-spin 0.8s ease-in-out infinite; }
 .mascot-thinking  { animation: mascot-pulse 1.8s ease-in-out infinite; }
 .mascot-happy     { animation: mascot-happy 0.7s ease-out forwards; }
+.mascot-error     { animation: mascot-error 0.7s ease-in-out 2; }
 
 /* ── Typing indicator dots ───────────────────────────────────────────── */
 
