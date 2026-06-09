@@ -13,11 +13,6 @@ export interface Source {
   section: string
 }
 
-export interface ChatTurn {
-  role: 'user' | 'assistant'
-  content: string
-}
-
 export type StreamEvent =
   | { type: 'token'; text: string }
   | { type: 'sources'; sources: Source[] }
@@ -83,13 +78,12 @@ export async function uploadPrescription(
 export async function* streamQuestion(
   sessionId: string,
   question: string,
-  history: ChatTurn[] = [],
   signal?: AbortSignal,
 ): AsyncGenerator<StreamEvent> {
   const res = await fetch(`${BASE}/chat/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
-    body: JSON.stringify({ session_id: sessionId, question, history }),
+    body: JSON.stringify({ session_id: sessionId, question }),
     signal,
   })
   if (res.status === 410) throw new SessionExpiredError()

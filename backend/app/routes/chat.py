@@ -8,6 +8,7 @@ from app.config import settings
 from app.dependencies import require_api_key, verify_session_owner
 from app.limiter import limiter
 from app.models.schemas import ChatRequest, ChatResponse
+from app.services import session_store
 from app.services.rag_pipeline import answer, answer_stream
 
 router = APIRouter()
@@ -22,8 +23,11 @@ async def chat(
 ) -> ChatResponse:
     await verify_session_owner(body.session_id, caller_hash)
     embed_executor = getattr(request.app.state, "embed_executor", None)
-    history = [h.model_dump() for h in body.history]
-    return await answer(body.session_id, body.question, history, embed_executor)
+    history = [h.model_dump() for h in await session_store.get_history(body.session_id)]
+    result = await answer(body.session_id, body.question, history, embed_executor)
+    await session_store.append_history(body.session_id, "user", body.question)
+    await session_store.append_history(body.session_id, "assistant", result.answer)
+    return result
 
 
 @router.post("/chat/stream")
@@ -43,17 +47,27 @@ async def chat_stream(
 
     await verify_session_owner(body.session_id, caller_hash)
     embed_executor = getattr(request.app.state, "embed_executor", None)
-    history = [h.model_dump() for h in body.history]
 
     async def event_generator() -> AsyncGenerator[str, None]:
+        history = [
+            h.model_dump() for h in await session_store.get_history(body.session_id)
+        ]
+        assistant_tokens: list[str] = []
         async for payload in answer_stream(
             body.session_id, body.question, history, embed_executor
         ):
             if payload == "[DONE]":
                 yield "event: done\ndata: \n\n"
+                await session_store.append_history(
+                    body.session_id, "user", body.question
+                )
+                await session_store.append_history(
+                    body.session_id, "assistant", "".join(assistant_tokens)
+                )
             elif payload.startswith("[SOURCES]"):
                 yield f"event: sources\ndata: {payload[9:]}\n\n"
             else:
+                assistant_tokens.append(payload)
                 # JSON-encode so newlines in LLM tokens don't corrupt SSE framing
                 yield f"event: token\ndata: {json.dumps(payload)}\n\n"
 

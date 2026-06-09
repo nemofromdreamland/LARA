@@ -63,7 +63,14 @@ class ChatTurn(BaseModel):
 class ChatRequest(BaseModel):
     session_id: str = Field(min_length=36, max_length=36)
     question: str = Field(min_length=2, max_length=4000)
-    history: Annotated[list[ChatTurn], Field(max_length=10)] = []
+    history: Annotated[list[ChatTurn], Field(max_length=10)] = Field(
+        default=[],
+        max_length=10,
+        description=(
+            "DEPRECATED. Ignored server-side — history is now stored in Redis "
+            "and loaded automatically per session."
+        ),
+    )
 
 
 class ChatResponse(BaseModel):

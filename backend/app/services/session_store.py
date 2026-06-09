@@ -7,7 +7,7 @@ import redis.asyncio as aioredis
 import redis.exceptions
 
 from app.exceptions import StorageUnavailableError
-from app.models.schemas import PrescriptionEntry
+from app.models.schemas import ChatTurn, PrescriptionEntry
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +145,39 @@ async def get_upload_result(session_id: str) -> tuple[list[str], list[str]]:
     drugs_found = await get_session_data(session_id, "drugs_found") or []
     missing_leaflets = await get_session_data(session_id, "missing_leaflets") or []
     return drugs_found, missing_leaflets
+
+
+# ── Conversation history ─────────────────────────────────────────────────────
+
+
+def _hist_key(session_id: str) -> str:
+    return f"history:{session_id}"
+
+
+async def append_history(session_id: str, role: str, content: str) -> None:
+    from app.config import settings
+
+    try:
+        r = _get_redis()
+        key = _hist_key(session_id)
+        entry = json.dumps({"role": role, "content": content, "ts": time.time()})
+        await r.rpush(key, entry)
+        await r.ltrim(key, -20, -1)
+        await r.expire(key, settings.session_ttl_seconds)
+    except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as exc:
+        raise StorageUnavailableError(str(exc)) from exc
+
+
+async def get_history(session_id: str, max_turns: int = 10) -> list[ChatTurn]:
+    try:
+        r = _get_redis()
+        raw = await r.lrange(_hist_key(session_id), -max_turns, -1)
+    except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as exc:
+        raise StorageUnavailableError(str(exc)) from exc
+    return [
+        ChatTurn(role=json.loads(item)["role"], content=json.loads(item)["content"])
+        for item in raw
+    ]
 
 
 # ── Upload job state ─────────────────────────────────────────────────────────

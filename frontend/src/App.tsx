@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ChatTurn } from './api'
 import { SessionExpiredError, createSession, streamQuestion, uploadPrescription } from './api'
 import ChatPanel from './components/ChatPanel'
 import Mascot from './components/Mascot'
@@ -165,14 +164,8 @@ export default function App() {
     setMessages((prev) => [...prev, userMsg])
     setPhase('asking')
 
-    // Build history from current messages snapshot (captured before setter runs)
-    const history: ChatTurn[] = messages
-      .filter((m) => m.content.length > 0)
-      .slice(-10)
-      .map((m) => ({ role: m.role === 'lara' ? 'assistant' : 'user', content: m.content }))
-
     try {
-      for await (const event of streamQuestion(sessionId, question, history, controller.signal)) {
+      for await (const event of streamQuestion(sessionId, question, controller.signal)) {
         if (event.type === 'token') {
           setMessages((prev) => {
             if (!prev.some((m) => m.id === laraId)) {
