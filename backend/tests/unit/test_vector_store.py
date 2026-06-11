@@ -1,7 +1,17 @@
+from unittest.mock import patch
+
 import chromadb
+import httpx
 import pytest
 
-from app.services.vector_store import delete_session, get_by_section, retrieve, store
+from app.services.vector_store import (
+    delete_session,
+    get_by_section,
+    ping,
+    retrieve,
+    session_id_from_collection,
+    store,
+)
 
 
 @pytest.fixture
@@ -17,11 +27,11 @@ def _make_embedding(value: float, dim: int = 384) -> list[float]:
 async def test_store_and_retrieve_basic(chroma_client):
     chunks = ["Lisinopril is used for hypertension."]
     embeddings = [_make_embedding(0.1)]
-    metadatas = [
-        {"session_id": "sess-1", "drug_name": "lisinopril", "section": "indications"}
-    ]
+    metadatas = [{"drug_name": "lisinopril", "section": "indications"}]
 
-    await store(chunks, embeddings, metadatas, client=chroma_client)
+    await store(
+        chunks, embeddings, metadatas, session_id="sess-1", client=chroma_client
+    )
 
     results = await retrieve(
         _make_embedding(0.1), "sess-1", top_k=1, client=chroma_client
@@ -37,13 +47,15 @@ async def test_session_isolation(chroma_client):
     await store(
         ["Drug A info."],
         [_make_embedding(0.5)],
-        [{"session_id": "sess-A", "drug_name": "drugA", "section": "indications"}],
+        [{"drug_name": "drugA", "section": "indications"}],
+        session_id="sess-A",
         client=chroma_client,
     )
     await store(
         ["Drug B info."],
         [_make_embedding(0.5)],
-        [{"session_id": "sess-B", "drug_name": "drugB", "section": "indications"}],
+        [{"drug_name": "drugB", "section": "indications"}],
+        session_id="sess-B",
         client=chroma_client,
     )
 
@@ -61,11 +73,10 @@ async def test_session_isolation(chroma_client):
 async def test_store_multiple_chunks(chroma_client):
     chunks = [f"Chunk {i}" for i in range(5)]
     embeddings = [_make_embedding(0.1 * i) for i in range(5)]
-    metadatas = [
-        {"session_id": "sess-2", "drug_name": "metformin", "section": "dosage"}
-        for _ in range(5)
-    ]
-    await store(chunks, embeddings, metadatas, client=chroma_client)
+    metadatas = [{"drug_name": "metformin", "section": "dosage"} for _ in range(5)]
+    await store(
+        chunks, embeddings, metadatas, session_id="sess-2", client=chroma_client
+    )
 
     results = await retrieve(
         _make_embedding(0.2), "sess-2", top_k=5, client=chroma_client
@@ -77,7 +88,8 @@ async def test_result_keys(chroma_client):
     await store(
         ["Some text."],
         [_make_embedding(0.3)],
-        [{"session_id": "sess-3", "drug_name": "aspirin", "section": "warnings"}],
+        [{"drug_name": "aspirin", "section": "warnings"}],
+        session_id="sess-3",
         client=chroma_client,
     )
     results = await retrieve(
@@ -91,7 +103,8 @@ async def test_retrieve_returns_distances(chroma_client):
     await store(
         ["Aspirin is used for pain relief."],
         [_make_embedding(0.5)],
-        [{"session_id": "sess-dist", "drug_name": "aspirin", "section": "indications"}],
+        [{"drug_name": "aspirin", "section": "indications"}],
+        session_id="sess-dist",
         client=chroma_client,
     )
     results = await retrieve(
@@ -110,9 +123,21 @@ async def test_retrieve_empty_session_returns_empty(chroma_client):
 
 
 async def test_delete_session_removes_all_docs(chroma_client):
-    meta = {"session_id": "sess-del", "drug_name": "warfarin", "section": "warnings"}
-    await store(["Chunk A."], [_make_embedding(0.1)], [meta], client=chroma_client)
-    await store(["Chunk B."], [_make_embedding(0.2)], [meta], client=chroma_client)
+    meta = {"drug_name": "warfarin", "section": "warnings"}
+    await store(
+        ["Chunk A."],
+        [_make_embedding(0.1)],
+        [meta],
+        session_id="sess-del",
+        client=chroma_client,
+    )
+    await store(
+        ["Chunk B."],
+        [_make_embedding(0.2)],
+        [meta],
+        session_id="sess-del",
+        client=chroma_client,
+    )
 
     deleted = await delete_session("sess-del", client=chroma_client)
     assert deleted == 2
@@ -132,13 +157,15 @@ async def test_delete_session_does_not_affect_other_sessions(chroma_client):
     await store(
         ["Keep this."],
         [_make_embedding(0.5)],
-        [{"session_id": "sess-keep", "drug_name": "aspirin", "section": "dosage"}],
+        [{"drug_name": "aspirin", "section": "dosage"}],
+        session_id="sess-keep",
         client=chroma_client,
     )
     await store(
         ["Delete this."],
         [_make_embedding(0.5)],
-        [{"session_id": "sess-gone", "drug_name": "aspirin", "section": "dosage"}],
+        [{"drug_name": "aspirin", "section": "dosage"}],
+        session_id="sess-gone",
         client=chroma_client,
     )
 
@@ -154,19 +181,15 @@ async def test_get_by_section_returns_matching_chunks(chroma_client):
     await store(
         ["Interacts with warfarin."],
         [_make_embedding(0.1)],
-        [
-            {
-                "session_id": "gs-1",
-                "drug_name": "aspirin",
-                "section": "drug_interactions",
-            }
-        ],
+        [{"drug_name": "aspirin", "section": "drug_interactions"}],
+        session_id="gs-1",
         client=chroma_client,
     )
     await store(
         ["Take with food."],
         [_make_embedding(0.2)],
-        [{"session_id": "gs-1", "drug_name": "aspirin", "section": "dosage"}],
+        [{"drug_name": "aspirin", "section": "dosage"}],
+        session_id="gs-1",
         client=chroma_client,
     )
     results = await get_by_section("gs-1", "drug_interactions", client=chroma_client)
@@ -179,7 +202,8 @@ async def test_get_by_section_filters_by_drug_name(chroma_client):
         await store(
             [f"{drug} interaction info."],
             [_make_embedding(0.1)],
-            [{"session_id": "gs-2", "drug_name": drug, "section": "drug_interactions"}],
+            [{"drug_name": drug, "section": "drug_interactions"}],
+            session_id="gs-2",
             client=chroma_client,
         )
     results = await get_by_section(
@@ -197,11 +221,74 @@ async def test_get_by_section_empty_when_no_match(chroma_client):
 
 
 async def test_store_accumulates_across_calls(chroma_client):
-    meta = {"session_id": "sess-4", "drug_name": "ibuprofen", "section": "dosage"}
-    await store(["First chunk."], [_make_embedding(0.1)], [meta], client=chroma_client)
-    await store(["Second chunk."], [_make_embedding(0.2)], [meta], client=chroma_client)
+    meta = {"drug_name": "ibuprofen", "section": "dosage"}
+    await store(
+        ["First chunk."],
+        [_make_embedding(0.1)],
+        [meta],
+        session_id="sess-4",
+        client=chroma_client,
+    )
+    await store(
+        ["Second chunk."],
+        [_make_embedding(0.2)],
+        [meta],
+        session_id="sess-4",
+        client=chroma_client,
+    )
 
     results = await retrieve(
         _make_embedding(0.15), "sess-4", top_k=5, client=chroma_client
     )
     assert len(results) == 2
+
+
+async def test_retrieve_filters_by_drug_name(chroma_client):
+    await store(
+        ["Aspirin chunk.", "Metformin chunk."],
+        [_make_embedding(0.1), _make_embedding(0.1)],
+        [
+            {"drug_name": "aspirin", "section": "dosage"},
+            {"drug_name": "metformin", "section": "dosage"},
+        ],
+        session_id="sess-5",
+        client=chroma_client,
+    )
+
+    results = await retrieve(
+        _make_embedding(0.1),
+        "sess-5",
+        top_k=5,
+        drug_name="aspirin",
+        client=chroma_client,
+    )
+    assert len(results) == 1
+    assert results[0]["drug_name"] == "aspirin"
+
+
+def test_session_id_from_collection_roundtrip():
+    sid = "11111111-2222-3333-4444-555555555555"
+    assert session_id_from_collection(f"session_{sid.replace('-', '_')}") == sid
+    assert session_id_from_collection("leaflets") is None
+
+
+async def test_idempotent_ops_retry_transient_errors():
+    """A ConnectError on the first attempt is retried and succeeds."""
+    calls = {"n": 0}
+
+    async def _flaky_run_sync(fn, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ConnectError("chroma hiccup")
+        return 1  # heartbeat payload
+
+    class _DummyClient:
+        def heartbeat(self):  # pragma: no cover - replaced by _flaky_run_sync
+            return 1
+
+    with (
+        patch("app.services.vector_store._get_client", return_value=_DummyClient()),
+        patch("app.services.vector_store.run_sync", side_effect=_flaky_run_sync),
+    ):
+        assert await ping() is True
+    assert calls["n"] == 2

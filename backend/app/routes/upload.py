@@ -62,7 +62,7 @@ async def _run_ingestion(
         drug_names = [e.drug_name for e in entries]
 
         results = await asyncio.gather(
-            *[process_drug(drug, session_id) for drug in drug_names],
+            *[process_drug(drug) for drug in drug_names],
             return_exceptions=True,
         )
 
@@ -89,7 +89,7 @@ async def _run_ingestion(
                 missing_drugs.append(drug)
                 continue
             embeddings = await embed(chunks, embed_executor)
-            await store(chunks, embeddings, metas)
+            await store(chunks, embeddings, metas, session_id=session_id)
             stored_drugs.append(drug)
 
         await save_upload_result(session_id, stored_drugs, missing_drugs)

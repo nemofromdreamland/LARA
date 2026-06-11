@@ -2,10 +2,11 @@ from app.services.chunker import chunk_text
 from app.services.dailymed import fetch_leaflet_sections
 
 
-async def process_drug(drug: str, session_id: str) -> tuple[str, list[str], list[dict]]:
+async def process_drug(drug: str) -> tuple[str, list[str], list[dict]]:
     """Fetch leaflet sections for one drug and produce chunks + metadata.
 
     Returns (drug, chunks, metas). Both lists are empty when no leaflet is found.
+    session_id is NOT in metas — it is implicit in the ChromaDB collection name.
     """
     sections = await fetch_leaflet_sections(drug)
     if not sections:
@@ -15,11 +16,5 @@ async def process_drug(drug: str, session_id: str) -> tuple[str, list[str], list
     for section in sections:
         for chunk in chunk_text(section.text):
             chunks.append(chunk)
-            metas.append(
-                {
-                    "session_id": session_id,
-                    "drug_name": drug,
-                    "section": section.section,
-                }
-            )
+            metas.append({"drug_name": drug, "section": section.section})
     return drug, chunks, metas

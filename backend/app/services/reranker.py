@@ -1,4 +1,5 @@
 import asyncio
+from concurrent.futures import Executor
 from functools import partial
 
 from prometheus_client import Histogram
@@ -36,11 +37,17 @@ def _predict_sync(query: str, texts: list[str]) -> list[float]:
     return _get_reranker().predict(pairs).tolist()
 
 
-async def rerank(query: str, chunks: list[dict]) -> list[dict]:
+async def rerank(
+    query: str, chunks: list[dict], executor: Executor | None = None
+) -> list[dict]:
     """Score each chunk against *query* with a cross-encoder and sort desc.
 
     Attaches a ``rerank_score`` float to every chunk dict in-place, then
     returns the list sorted from highest to lowest score.
+
+    Runs inference in *executor* (the dedicated model-inference pool when
+    called from the app) so cross-encoder forward passes don't queue behind
+    ChromaDB calls and PDF parsing in the default pool.
     """
     if not chunks:
         return chunks
@@ -48,7 +55,7 @@ async def rerank(query: str, chunks: list[dict]) -> list[dict]:
     loop = asyncio.get_running_loop()
     with _RERANK_DURATION.time():
         scores: list[float] = await loop.run_in_executor(
-            None, partial(_predict_sync, query, texts)
+            executor, partial(_predict_sync, query, texts)
         )
     for chunk, score in zip(chunks, scores):
         chunk["rerank_score"] = score

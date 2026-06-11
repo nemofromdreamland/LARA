@@ -116,6 +116,12 @@ def _sections_from_cache(raw: list[dict]) -> list[LeafletSection]:
     return [LeafletSection(**item) for item in raw]
 
 
+def _title_matches(drug_name: str, title: str) -> bool:
+    """Return True if *drug_name* appears as a whole word in the SPL title."""
+    pattern = re.compile(r"\b" + re.escape(drug_name) + r"\b", re.IGNORECASE)
+    return bool(pattern.search(title))
+
+
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(multiplier=1, min=1, max=8),
@@ -123,10 +129,16 @@ def _sections_from_cache(raw: list[dict]) -> list[LeafletSection]:
     reraise=True,
 )
 async def _fetch_set_id(drug_name: str, client: httpx.AsyncClient) -> str | None:
-    """Return the first SPL set-id for *drug_name*, or None if not found."""
+    """Return the best SPL set-id for *drug_name*, or None if not found.
+
+    Prefers the first result whose title mentions the drug name as a whole
+    word; the search API ranks loosely, so the top hit can be a combination
+    product or an unrelated formulation. Falls back to the first result when
+    no title matches.
+    """
     response = await client.get(
         f"{DAILYMED_BASE}/spls.json",
-        params={"drug_name": drug_name, "pagesize": 1},
+        params={"drug_name": drug_name, "pagesize": 5},
     )
     response.raise_for_status()
     items = response.json().get("data", [])
@@ -137,6 +149,15 @@ async def _fetch_set_id(drug_name: str, client: httpx.AsyncClient) -> str | None
             extra={"request_id": get_request_id()},
         )
         return None
+    for item in items:
+        if _title_matches(drug_name, item.get("title", "")):
+            return item.get("setid")
+    logger.warning(
+        "DailyMed: no SPL title matched %r — falling back to first result %r",
+        drug_name,
+        items[0].get("title", ""),
+        extra={"request_id": get_request_id()},
+    )
     return items[0].get("setid")
 
 

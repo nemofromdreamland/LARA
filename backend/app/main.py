@@ -55,25 +55,30 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 
 
 async def _cleanup_loop() -> None:
-    """Periodically delete ChromaDB vectors for sessions that have expired in Redis."""
+    """Periodically delete ChromaDB collections for expired sessions."""
     from app.services import vector_store
     from app.services.session_store import session_exists
 
     while True:
         await asyncio.sleep(settings.cleanup_interval_seconds)
         try:
-            session_ids = await vector_store.list_session_ids()
-            for sid in session_ids:
+            client = vector_store._get_client()
+            collections = await run_sync(client.list_collections)
+            for col in collections:
+                name = col.name if hasattr(col, "name") else str(col)
+                sid = vector_store.session_id_from_collection(name)
+                if sid is None:
+                    continue
                 if not await session_exists(sid):
                     deleted = await vector_store.delete_session(sid)
-                    if deleted:
+                    if deleted is not None:
                         logger.info(
-                            "cleanup: removed %d vectors for expired session %s",
-                            deleted,
+                            "cleanup: removed collection %s for expired session %s",
+                            name,
                             sid,
                         )
         except Exception:
-            logger.exception("cleanup: error during orphaned-vector sweep")
+            logger.exception("cleanup: error during orphaned-collection sweep")
 
 
 @asynccontextmanager
@@ -93,6 +98,29 @@ async def lifespan(app: FastAPI):
     await init_cerebras_client()
     await run_sync(preload_model)
     await run_sync(preload_reranker)
+    # One-time migration: clean up orphaned "leaflets" collection from the old
+    # single-collection design. Delete it only if it is empty.
+    try:
+        from app.services import vector_store as _vs
+
+        _chroma = _vs._get_client()
+        try:
+            _legacy = await run_sync(_chroma.get_collection, "leaflets")
+            _count = await run_sync(_legacy.count)
+            if _count == 0:
+                await run_sync(_chroma.delete_collection, "leaflets")
+                logger.info("startup: deleted empty legacy 'leaflets' collection")
+            else:
+                logger.warning(
+                    "startup: legacy 'leaflets' collection has %d vectors"
+                    " — leaving intact",
+                    _count,
+                )
+        except Exception:
+            pass  # collection doesn't exist, nothing to migrate
+    except Exception:
+        logger.exception("startup: error during legacy collection migration check")
+
     cleanup_task = asyncio.create_task(_cleanup_loop())
     try:
         yield
@@ -108,7 +136,11 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="LARA API", version="0.1.0", lifespan=lifespan)
 app.state.limiter = limiter
 
-Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+# expose() forwards extra kwargs to FastAPI's route registration, so the
+# metrics endpoint requires the same API key as the business routes.
+Instrumentator().instrument(app).expose(
+    app, endpoint="/metrics", dependencies=[Depends(require_api_key)]
+)
 
 
 @app.exception_handler(RateLimitExceeded)

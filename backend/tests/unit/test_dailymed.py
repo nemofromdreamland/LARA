@@ -111,6 +111,45 @@ async def test_fetch_set_id_returns_none_when_not_found():
 
 
 @respx.mock
+async def test_fetch_set_id_prefers_title_match():
+    """A later result whose title mentions the drug wins over the first hit."""
+    respx.get(SEARCH_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"setid": "combo-id", "title": "AMLODIPINE AND LISINO tablet"},
+                    {"setid": "exact-id", "title": "LISINOPRIL tablet"},
+                ],
+                "metadata": {"total_elements": 2},
+            },
+        )
+    )
+    async with httpx.AsyncClient() as client:
+        result = await _fetch_set_id("lisinopril", client)
+    assert result == "exact-id"
+
+
+@respx.mock
+async def test_fetch_set_id_falls_back_to_first_without_title_match():
+    respx.get(SEARCH_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "data": [
+                    {"setid": "first-id", "title": "SOMETHING ELSE tablet"},
+                    {"setid": "second-id", "title": "ANOTHER PRODUCT capsule"},
+                ],
+                "metadata": {"total_elements": 2},
+            },
+        )
+    )
+    async with httpx.AsyncClient() as client:
+        result = await _fetch_set_id("lisinopril", client)
+    assert result == "first-id"
+
+
+@respx.mock
 async def test_fetch_set_id_raises_on_http_error():
     respx.get(SEARCH_URL).mock(return_value=httpx.Response(500))
     with pytest.raises(httpx.HTTPStatusError):

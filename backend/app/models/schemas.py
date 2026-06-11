@@ -27,13 +27,6 @@ class HealthResponse(BaseModel):
     components: dict[str, "ComponentHealth"]
 
 
-class UploadResponse(BaseModel):
-    session_id: str
-    drugs_found: list[str]
-    missing_leaflets: list[str]
-    status: Literal["ok", "no_leaflets_found"]
-
-
 class UploadJobResponse(BaseModel):
     job_id: str
     session_id: str

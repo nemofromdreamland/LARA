@@ -22,8 +22,10 @@ async def verify_session_owner(session_id: str, caller_hash: str) -> None:
 
     owner_hash = await session_store.get_session_owner(session_id)
     if owner_hash is None:
+        # 410 (not 404): the frontend treats 410 as "session expired" and
+        # auto-creates a fresh session (frontend/src/api.ts SessionExpiredError).
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=status.HTTP_410_GONE,
             detail="Session not found or expired",
         )
     if owner_hash != caller_hash:

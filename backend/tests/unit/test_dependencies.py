@@ -77,10 +77,10 @@ async def test_verify_session_owner_wrong_hash_raises_403():
     assert exc_info.value.status_code == 403
 
 
-async def test_verify_session_owner_missing_session_raises_404():
+async def test_verify_session_owner_missing_session_raises_410():
     with pytest.raises(HTTPException) as exc_info:
         await verify_session_owner("nonexistent-session-id", _VALID_HASH)
-    assert exc_info.value.status_code == 404
+    assert exc_info.value.status_code == 410
 
 
 def test_session_owner_bound_via_http(authed_client: TestClient):

@@ -38,7 +38,10 @@ def test_post_session_redis_down_returns_503(client: TestClient):
 
 def test_get_job_status_redis_down_returns_503(client: TestClient):
     _ss._redis = _broken_redis()
-    response = client.get("/upload/status/00000000-0000-0000-0000-000000000000")
+    response = client.get(
+        "/upload/status/00000000-0000-0000-0000-000000000000",
+        params={"session_id": "a" * 36},
+    )
     assert response.status_code == 503
     assert "Storage unavailable" in response.json()["detail"]
 

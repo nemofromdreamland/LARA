@@ -116,6 +116,63 @@ def test_upload_429_body_has_detail_key(client: TestClient, session_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Rate-limit key derivation
+# ---------------------------------------------------------------------------
+
+
+def _make_request(headers: dict[str, str], client_host: str = "9.9.9.9"):
+    from starlette.requests import Request
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+        "client": (client_host, 12345),
+    }
+    return Request(scope)
+
+
+def test_real_ip_header_is_used():
+    from app.limiter import _get_real_ip
+
+    request = _make_request({"X-Real-IP": "1.2.3.4"})
+    assert _get_real_ip(request) == "1.2.3.4"
+
+
+def test_forwarded_for_is_ignored():
+    """Client-controlled X-Forwarded-For must not create a fresh bucket."""
+    from app.limiter import _get_real_ip
+
+    request = _make_request({"X-Forwarded-For": "6.6.6.6"})
+    assert _get_real_ip(request) == "9.9.9.9"
+
+
+def test_falls_back_to_client_host():
+    from app.limiter import _get_real_ip
+
+    request = _make_request({})
+    assert _get_real_ip(request) == "9.9.9.9"
+
+
+@patch("app.routes.chat.answer", new_callable=AsyncMock)
+def test_spoofed_forwarded_for_does_not_reset_limit(
+    mock_answer, client: TestClient, session_id: str
+):
+    mock_answer.return_value = MOCK_ANSWER
+
+    for i in range(20):
+        client.post("/chat", json={"session_id": session_id, "question": f"q{i}"})
+
+    res = client.post(
+        "/chat",
+        json={"session_id": session_id, "question": "overflow"},
+        headers={"X-Forwarded-For": "6.6.6.6"},
+    )
+    assert res.status_code == 429
+
+
+# ---------------------------------------------------------------------------
 # Chat rate limiting
 # ---------------------------------------------------------------------------
 

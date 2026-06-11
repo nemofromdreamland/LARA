@@ -34,8 +34,9 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    ports:
-      - "8000:8000"
+    # No host port mapping: the backend is reachable only through the
+    # frontend nginx proxy on the Docker network. Publishing 8000 would let
+    # callers bypass the proxy and spoof rate-limit headers.
     env_file:
       - ./backend/.env
     environment:

@@ -31,13 +31,8 @@ async def _store_interaction_chunk(
     await store(
         [text],
         [_make_embedding()],
-        [
-            {
-                "session_id": session_id,
-                "drug_name": drug_name,
-                "section": "drug_interactions",
-            }
-        ],
+        [{"drug_name": drug_name, "section": "drug_interactions"}],
+        session_id=session_id,
         client=client,
     )
 

@@ -75,6 +75,32 @@ async def test_rerank_equal_scores_returns_all_chunks():
 
 
 # ---------------------------------------------------------------------------
+# rerank — executor routing
+# ---------------------------------------------------------------------------
+
+
+async def test_rerank_uses_supplied_executor():
+    from concurrent.futures import ThreadPoolExecutor
+
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test-rerank")
+    used_threads: list[str] = []
+
+    def _fake_predict(query, texts):
+        import threading
+
+        used_threads.append(threading.current_thread().name)
+        return [0.5 for _ in texts]
+
+    try:
+        with patch("app.services.reranker._predict_sync", side_effect=_fake_predict):
+            await rerank("query", [_chunk("A")], executor=executor)
+    finally:
+        executor.shutdown(wait=False)
+
+    assert used_threads and used_threads[0].startswith("test-rerank")
+
+
+# ---------------------------------------------------------------------------
 # preload_reranker
 # ---------------------------------------------------------------------------
 
