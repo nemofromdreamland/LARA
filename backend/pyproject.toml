@@ -45,6 +45,7 @@ dev = [
 dev       = "uvicorn app.main:app --reload --port 8000"
 test      = "pytest"
 test-v    = "pytest -v"
+test-light = 'pytest -m "not ml"'
 lint      = "ruff check app tests"
 fmt       = "ruff format app tests"
 fmt-check = "ruff format --check app tests"
@@ -61,6 +62,9 @@ select = ["E", "F", "I"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "--cov=app --cov-report=term-missing --cov-fail-under=80"
+markers = [
+    "ml: loads real ML model weights (excluded from default CI; run via `task test`)",
+]
 
 [[tool.uv.index]]
 name = "pytorch-cpu"
