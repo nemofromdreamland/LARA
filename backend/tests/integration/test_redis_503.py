@@ -29,15 +29,22 @@ def _broken_redis():
     return mock
 
 
-def test_post_session_redis_down_returns_503(client: TestClient):
+@pytest.fixture
+def broken_redis():
+    """Swap session_store's Redis for a failing mock, restoring afterwards."""
+    old = _ss._redis
     _ss._redis = _broken_redis()
+    yield
+    _ss._redis = old
+
+
+def test_post_session_redis_down_returns_503(client: TestClient, broken_redis):
     response = client.post("/session")
     assert response.status_code == 503
     assert "Storage unavailable" in response.json()["detail"]
 
 
-def test_get_job_status_redis_down_returns_503(client: TestClient):
-    _ss._redis = _broken_redis()
+def test_get_job_status_redis_down_returns_503(client: TestClient, broken_redis):
     response = client.get(
         "/upload/status/00000000-0000-0000-0000-000000000000",
         params={"session_id": "a" * 36},
@@ -46,8 +53,7 @@ def test_get_job_status_redis_down_returns_503(client: TestClient):
     assert "Storage unavailable" in response.json()["detail"]
 
 
-def test_post_chat_redis_down_returns_503(client: TestClient):
-    _ss._redis = _broken_redis()
+def test_post_chat_redis_down_returns_503(client: TestClient, broken_redis):
     response = client.post(
         "/chat",
         json={
