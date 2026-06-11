@@ -569,3 +569,60 @@ async def test_stream_cerebras_yields_single_chunk(
         tokens.append(chunk)
 
     assert tokens == ["Hello world from Cerebras"]
+
+
+# ---------------------------------------------------------------------------
+# generate_stream — Groq fails MID-stream (after yielding tokens)
+# ---------------------------------------------------------------------------
+
+
+@patch("app.services.llm_client.settings")
+@patch("app.services.llm_client._cerebras_breaker")
+@patch("app.services.llm_client.httpx.AsyncClient")
+@patch("app.services.llm_client.AsyncGroq")
+@patch("app.services.llm_client._groq_breaker")
+async def test_generate_stream_midstream_failure_falls_back_after_partial_tokens(
+    mock_groq_breaker, mock_groq_cls, mock_client_cls, mock_cerebras_cb, mock_settings
+):
+    """Groq dying after it already yielded tokens still falls back to Cerebras.
+
+    Pins the current contract: the partial Groq tokens are NOT retracted, and
+    Cerebras re-yields the complete answer as one final chunk — the consumer
+    receives the partial text followed by the full fallback text.
+    """
+    from app.config import LLMProvider
+
+    mock_settings.llm_provider = LLMProvider.groq
+    mock_settings.groq_api_key = "fake-key"
+    mock_settings.cerebras_api_key = "fake-cerebras-key"
+    mock_groq_breaker.allow_request = AsyncMock(return_value=True)
+    mock_groq_breaker.record_failure = AsyncMock()
+    mock_groq_breaker.record_success = AsyncMock()
+    mock_cerebras_cb.allow_request = AsyncMock(return_value=True)
+    mock_cerebras_cb.record_success = AsyncMock()
+    mock_cerebras_cb.record_failure = AsyncMock()
+
+    async def _dying_stream():
+        for t in ("Partial ", "answer"):
+            chunk = MagicMock()
+            chunk.choices[0].delta.content = t
+            yield chunk
+        raise groq_sdk.InternalServerError(
+            "boom", response=MagicMock(status_code=500), body={}
+        )
+
+    mock_groq_cls.return_value.chat.completions.create = AsyncMock(
+        return_value=_dying_stream()
+    )
+
+    mock_http = _mock_cerebras_client("Complete fallback answer.")
+    mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_http)
+    mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    tokens = []
+    async for t in generate_stream("ctx", "q"):
+        tokens.append(t)
+
+    assert tokens == ["Partial ", "answer", "Complete fallback answer."]
+    mock_groq_breaker.record_failure.assert_called_once()
+    mock_groq_breaker.record_success.assert_not_called()
