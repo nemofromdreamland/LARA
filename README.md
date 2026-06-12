@@ -1,21 +1,36 @@
-# ![LARA mascot](frontend/public/mascot.png) LARA — Leaflet Assistant RAG Application
+<div align="center">
+
+<img src="frontend/public/mascot.png" alt="LARA mascot" width="110">
+
+<h1>LARA</h1>
+
+**L**eaflet **A**ssistant **R**AG **A**pplication
+
+Upload a prescription PDF and ask questions about your medications —<br>
+answers grounded in official FDA drug leaflets from [DailyMed](https://dailymed.nlm.nih.gov/dailymed/) (NLM),<br>
+streamed token-by-token with per-answer source citations.
 
 [![CI](https://github.com/nemofromdreamland/LARA/actions/workflows/ci.yml/badge.svg)](https://github.com/nemofromdreamland/LARA/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-f39237.svg)](LICENSE)
+[![Architecture](https://img.shields.io/badge/docs-architecture_%26_design-1a2744.svg)](ARCHITECTURE.md)
 
-Upload a prescription PDF and ask questions about your medications — answers grounded in official FDA drug leaflets from [DailyMed](https://dailymed.nlm.nih.gov/dailymed/) (U.S. National Library of Medicine), streamed token-by-token with per-answer source citations.
+[How it works](#how-it-works) · [Setup](#setup) · [API](#api) · [Testing](#testing--ci) · **[Architecture & design decisions →](ARCHITECTURE.md)**
 
 <!-- TODO: record a 30-second demo (upload → drugs extracted → streamed answer with sources)
      and embed it here:  ![LARA demo](docs/demo.gif) -->
 
+</div>
+
+---
+
 ## How It Works
 
-1. You upload a prescription PDF; ingestion runs as an async job (HTTP 202 + status polling)
-2. LARA extracts structured medication entries (drug, dosage, frequency) — LLM-first, with regex/spaCy fallback tiers, behind a prompt-injection quarantine
-3. Official leaflet sections are fetched from DailyMed and cached in Redis
-4. Leaflets are chunked, embedded locally (PubMedBERT), and stored in a **per-session ChromaDB collection**
-5. You ask questions in a chat interface; retrieval is per-drug (every prescribed drug gets representation), reranked by a local cross-encoder, and trimmed to a token budget
-6. Answers stream over SSE, generated **only** from the retrieved leaflet context; the LLM must cite which `drug/section` labels it used, and the source list is filtered to those citations
+1. **Upload** — you submit a prescription PDF; ingestion runs as an async job (HTTP 202 + status polling)
+2. **Extract** — LARA pulls structured medication entries (drug, dosage, frequency): LLM-first, with regex/spaCy fallback tiers, behind a prompt-injection quarantine
+3. **Fetch** — official leaflet sections come from DailyMed and are cached in Redis
+4. **Index** — leaflets are chunked, embedded locally (PubMedBERT), and stored in a **per-session ChromaDB collection**
+5. **Retrieve** — questions are answered per-drug (every prescribed drug gets representation), reranked by a local cross-encoder, and trimmed to a token budget
+6. **Answer** — tokens stream over SSE, generated **only** from the retrieved leaflet context; the LLM must cite which `drug/section` labels it used, and the source list is filtered to those citations
 
 ## Architecture
 
@@ -165,4 +180,9 @@ Tuning knobs (retrieval top-k and distance threshold, context token budget, rate
 
 MIT — see [LICENSE](LICENSE).
 
-Drug leaflet data is sourced from [DailyMed](https://dailymed.nlm.nih.gov/dailymed/) (U.S. National Library of Medicine), public domain. LARA provides information from official drug leaflets only and is not a substitute for professional medical advice.
+Drug leaflet data is sourced from [DailyMed](https://dailymed.nlm.nih.gov/dailymed/) (U.S. National Library of Medicine), public domain.
+
+## Disclaimer
+
+> **LARA is not a substitute for professional medical advice — always consult your doctor or pharmacist.**
+> It provides information from official drug leaflets only and cannot account for your personal medical situation.
