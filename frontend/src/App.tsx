@@ -175,6 +175,12 @@ export default function App() {
               m.id === laraId ? { ...m, content: m.content + event.text } : m,
             )
           })
+        } else if (event.type === 'reset') {
+          // Mid-stream provider failover: the answer is being regenerated from
+          // scratch, so the partial text shown so far must be discarded.
+          setMessages((prev) =>
+            prev.map((m) => (m.id === laraId ? { ...m, content: '' } : m)),
+          )
         } else if (event.type === 'sources') {
           setMessages((prev) =>
             prev.map((m) => {

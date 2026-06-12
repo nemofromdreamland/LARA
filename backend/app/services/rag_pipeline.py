@@ -274,6 +274,8 @@ async def answer_stream(
 
     Yields:
       - Raw text tokens while the LLM is generating.
+      - llm_client.STREAM_RESET (passed through) if a mid-stream provider
+        failover invalidates the tokens yielded so far.
       - A single ``[SOURCES]{json}`` line once generation is complete.
       - A final ``[DONE]`` line.
 

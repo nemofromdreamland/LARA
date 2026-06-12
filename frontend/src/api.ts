@@ -15,6 +15,7 @@ export interface Source {
 
 export type StreamEvent =
   | { type: 'token'; text: string }
+  | { type: 'reset' } // discard tokens received so far (mid-stream provider failover)
   | { type: 'sources'; sources: Source[] }
   | { type: 'done' }
 
@@ -120,11 +121,13 @@ export async function* streamQuestion(
         }
       }
 
-      if (!dataLine && eventType !== 'done') continue
+      if (!dataLine && eventType !== 'done' && eventType !== 'reset') continue
 
       if (eventType === 'done') {
         yield { type: 'done' }
         return
+      } else if (eventType === 'reset') {
+        yield { type: 'reset' }
       } else if (eventType === 'sources') {
         const parsed = JSON.parse(dataLine)
         yield { type: 'sources', sources: parsed.sources }

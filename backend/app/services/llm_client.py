@@ -19,6 +19,13 @@ class ServiceUnavailableError(Exception):
     """Raised when all LLM providers have open circuit breakers."""
 
 
+# Sentinel yielded by generate_stream when partial tokens must be discarded:
+# Groq died mid-stream and the fallback provider regenerates from scratch, so
+# the consumer must drop everything received before this marker. Follows the
+# same in-band convention as rag_pipeline's [SOURCES]/[DONE] sentinels.
+STREAM_RESET = "[RESET]"
+
+
 _LLM_CALLS = Counter(
     "lara_llm_provider_calls_total",
     "LLM provider call outcomes",
@@ -209,7 +216,9 @@ async def generate_stream(
     Applies the same circuit-breaker routing as generate():
     - Groq (default): streams tokens from Groq's native streaming API; on
       transient error falls back to Cerebras and yields the full response as
-      one chunk.
+      one chunk. If Groq dies *after* yielding tokens, a STREAM_RESET sentinel
+      is yielded first so the consumer discards the partial Groq text instead
+      of displaying it concatenated with the full fallback answer.
     - Cerebras provider or Groq circuit OPEN: yields the full response as one
       chunk (Cerebras has no native streaming API).
     """
@@ -231,8 +240,10 @@ async def generate_stream(
             yield chunk
         return
 
+    yielded_any = False
     try:
         async for chunk in _stream_groq(prompt, history=hist):
+            yielded_any = True
             yield chunk
         await _groq_breaker.record_success()
     except _GROQ_TRANSIENT as exc:
@@ -242,6 +253,8 @@ async def generate_stream(
             exc,
             extra={"request_id": rid},
         )
+        if yielded_any:
+            yield STREAM_RESET
         async for chunk in _stream_cerebras(prompt, history=hist):
             yield chunk
 

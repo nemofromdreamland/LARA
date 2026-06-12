@@ -148,3 +148,44 @@ async def test_chat_stream_midstream_failure_truncates_without_done(
     text = received.decode()
     assert "event: done" not in text
     assert await get_history(session_id) == []
+
+
+# ---------------------------------------------------------------------------
+# Mid-stream provider failover (reset event)
+# ---------------------------------------------------------------------------
+
+
+@patch("app.routes.chat.answer_stream")
+async def test_chat_stream_reset_discards_partial_tokens(
+    mock_stream, client: TestClient, session_id: str
+):
+    """A STREAM_RESET sentinel from the pipeline becomes an `event: reset`
+    frame, and only the regenerated answer is persisted to history — the
+    partial pre-failover tokens are discarded."""
+    from app.services.llm_client import STREAM_RESET
+
+    sources_payload = "[SOURCES]" + json.dumps({"sources": []})
+    mock_stream.return_value = _make_stream(
+        "Partial ", "garbage", STREAM_RESET, "Clean answer.", sources_payload, "[DONE]"
+    )
+
+    received = b""
+    with client.stream(
+        "POST",
+        "/chat/stream",
+        json={"session_id": session_id, "question": "What are the side effects?"},
+    ) as resp:
+        assert resp.status_code == 200
+        for chunk in resp.iter_bytes():
+            received += chunk
+
+    text = received.decode()
+    assert "event: reset" in text
+    # The sentinel itself is never forwarded as token data.
+    assert json.dumps(STREAM_RESET) not in text
+
+    turns = await get_history(session_id)
+    assert [(t.role, t.content) for t in turns] == [
+        ("user", "What are the side effects?"),
+        ("assistant", "Clean answer."),  # pre-reset tokens excluded
+    ]

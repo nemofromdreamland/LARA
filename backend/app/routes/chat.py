@@ -9,6 +9,7 @@ from app.dependencies import require_api_key, verify_session_owner
 from app.limiter import limiter
 from app.models.schemas import ChatRequest, ChatResponse
 from app.services import session_store
+from app.services.llm_client import STREAM_RESET
 from app.services.rag_pipeline import answer, answer_stream
 
 router = APIRouter()
@@ -41,6 +42,8 @@ async def chat_stream(
 
     Event types:
       event: token   — a JSON-encoded text chunk from the LLM
+      event: reset   — discard all tokens received so far (mid-stream provider
+                       failover regenerates the answer from scratch)
       event: sources — JSON sources payload (sent once, after generation)
       event: done    — end-of-stream sentinel
     """
@@ -64,6 +67,11 @@ async def chat_stream(
                 await session_store.append_history(
                     body.session_id, "assistant", "".join(assistant_tokens)
                 )
+            elif payload == STREAM_RESET:
+                # Mid-stream failover: the partial tokens are superseded by the
+                # regenerated answer, both client-side and in stored history.
+                assistant_tokens.clear()
+                yield "event: reset\ndata: \n\n"
             elif payload.startswith("[SOURCES]"):
                 yield f"event: sources\ndata: {payload[9:]}\n\n"
             else:
