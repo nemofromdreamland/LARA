@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { SessionExpiredError, createSession, streamQuestion, uploadPrescription } from './api'
+import { SessionExpiredError, createSession, listSamples, loadSample, streamQuestion, uploadPrescription } from './api'
+import type { SampleInfo } from './api'
 import ChatPanel from './components/ChatPanel'
 import Mascot from './components/Mascot'
+import SamplePicker from './components/SamplePicker'
 import UploadZone from './components/UploadZone'
 
 export type Phase = 'idle' | 'uploading' | 'ready' | 'asking'
@@ -44,6 +46,8 @@ export default function App() {
   const [drugs, setDrugs] = useState<string[]>([])
   const [messages, setMessages] = useState<Message[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [samples, setSamples] = useState<SampleInfo[]>([])
+  const [loadingSampleId, setLoadingSampleId] = useState<string | null>(null)
   const [mascotHappy, setMascotHappy] = useState(false)
   const [mascotError, setMascotError] = useState(false)
   const [dark, setDark] = useState(() => {
@@ -76,6 +80,13 @@ export default function App() {
     createSession()
       .then((id) => { setSessionId(id); setSessionReady(true) })
       .catch(() => setError('Unable to reach the server. Try refreshing the page.'))
+  }, [])
+
+  // Sample list is decorative on failure — hide the section rather than error
+  useEffect(() => {
+    listSamples()
+      .then(setSamples)
+      .catch(() => setSamples([]))
   }, [])
 
   useEffect(() => {
@@ -118,15 +129,16 @@ export default function App() {
       .catch(() => setError('Unable to reach the server. Try refreshing the page.'))
   }, [messages])
 
-  const handleUpload = useCallback(async (file: File) => {
-    if (!sessionId) return
+  const startIngestion = useCallback(async (
+    begin: (signal: AbortSignal) => Promise<{ drugs_found: string[]; missing_leaflets: string[]; status: string }>,
+  ) => {
     abortControllerRef.current?.abort()
     const controller = new AbortController()
     abortControllerRef.current = controller
     setPhase('uploading')
     setError(null)
     try {
-      const result = await uploadPrescription(sessionId, file, controller.signal)
+      const result = await begin(controller.signal)
       setDrugs(result.drugs_found)
       setPhase('ready')
       triggerHappy()
@@ -149,7 +161,22 @@ export default function App() {
       setPhase('idle')
       triggerMascotError()
     }
-  }, [sessionId, triggerHappy, triggerMascotError, handleReset])
+  }, [triggerHappy, triggerMascotError, handleReset])
+
+  const handleUpload = useCallback(async (file: File) => {
+    if (!sessionId) return
+    await startIngestion((signal) => uploadPrescription(sessionId, file, signal))
+  }, [sessionId, startIngestion])
+
+  const handleSampleSelect = useCallback(async (sampleId: string) => {
+    if (!sessionId) return
+    setLoadingSampleId(sampleId)
+    try {
+      await startIngestion((signal) => loadSample(sessionId, sampleId, signal))
+    } finally {
+      setLoadingSampleId(null)
+    }
+  }, [sessionId, startIngestion])
 
   const handleQuestion = useCallback(async (question: string) => {
     if (!sessionId || phase === 'asking') return
@@ -320,6 +347,12 @@ export default function App() {
             {/* Upload card */}
             <div className="bg-surface-lowest dark:bg-surface-lowest-d rounded-5xl shadow-ambient flex flex-col justify-center min-h-[320px]">
               <UploadZone onUpload={handleUpload} loading={phase === 'uploading'} sessionReady={sessionReady} />
+              <SamplePicker
+                samples={samples}
+                onSelect={handleSampleSelect}
+                loadingId={loadingSampleId}
+                disabled={phase === 'uploading' || !sessionReady}
+              />
             </div>
           </div>
         ) : (

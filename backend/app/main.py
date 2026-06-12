@@ -17,7 +17,7 @@ from app.config import settings
 from app.dependencies import require_api_key
 from app.exceptions import StorageUnavailableError
 from app.limiter import limiter
-from app.routes import chat, health, interactions, session, upload
+from app.routes import chat, health, interactions, samples, session, upload
 from app.services import session_store
 from app.services.embedder import preload_model
 from app.services.llm_client import (
@@ -26,6 +26,7 @@ from app.services.llm_client import (
     init_cerebras_client,
 )
 from app.services.reranker import preload_reranker
+from app.services.samples import seed_sample_leaflet_cache
 from app.utils import request_id_var, run_sync
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,11 @@ async def lifespan(app: FastAPI):
     )
     app.state.embed_executor = embed_executor
     await session_store.init_redis(settings.redis_url)
+    try:
+        seeded = await seed_sample_leaflet_cache()
+        logger.info("seeded %d sample DailyMed leaflets", seeded)
+    except Exception:
+        logger.exception("sample leaflet cache seeding failed (non-fatal)")
     await init_cerebras_client()
     await run_sync(preload_model)
     await run_sync(preload_reranker)
@@ -154,5 +160,6 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(session.router, dependencies=[Depends(require_api_key)])
 app.include_router(upload.router, dependencies=[Depends(require_api_key)])
+app.include_router(samples.router, dependencies=[Depends(require_api_key)])
 app.include_router(chat.router, dependencies=[Depends(require_api_key)])
 app.include_router(interactions.router, dependencies=[Depends(require_api_key)])
