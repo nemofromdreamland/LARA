@@ -1,0 +1,32 @@
+[
+  {
+    "drug_name": "Digoxin 0.125mg",
+    "section": "contraindications",
+    "text": "Digoxin tablets are contraindicated in patients with: Ventricular fibrillation [see Warnings and Precautions (5.1) ] Known hypersensitivity to digoxin (reactions seen include unexplained rash, swelling of the mouth, lips or throat or a difficulty in breathing). A hypersensitivity reaction to other digitalis preparations usually constitutes a contraindication to digoxin."
+  },
+  {
+    "drug_name": "Digoxin 0.125mg",
+    "section": "adverse_reactions",
+    "text": "The following adverse reactions are included in more detail in the Warnings and Precautions section of the label: Cardiac arrhythmias [see Warnings and Precautions (5.1 , 5.2) ] Digoxin Toxicity [see Warnings and Precautions (5.3) ]"
+  },
+  {
+    "drug_name": "Digoxin 0.125mg",
+    "section": "drug_interactions",
+    "text": "Digoxin has a narrow therapeutic index, increased monitoring of serum digoxin concentrations and for potential signs and symptoms of clinical toxicity is necessary when initiating, adjusting, or discontinuing drugs that may interact with digoxin. Prescribers should consult the prescribing information of any drug which is co-prescribed with digoxin for potential drug interaction information."
+  },
+  {
+    "drug_name": "Digoxin 0.125mg",
+    "section": "pregnancy",
+    "text": "Risk Summary Experience with digoxin in pregnant women over several decades, based on published retrospective clinical studies and case reports, has not led to the identification of a drug associated risk of major birth defects, miscarriage or adverse maternal and fetal outcomes. Untreated underlying maternal conditions, such as heart failure and atrial fibrillation, during pregnancy pose a risk to the mother and fetus (see Clinical Consideration) . Animal reproduction studies have not been conducted with digoxin. The estimated background risk of major birth defects and miscarriage for the indicated population(s) are unknown. All pregnancies have a background risk of birth defect, loss, or other adverse outcomes. In the U.S. general population, the estimated background risk of major birth defects and miscarriage in clinically recognized pregnancies is 2 to 4% and 15 to 20%, respectively. Clinical Considerations Disease-associated maternal and/or embryo/fetal risk Pregnant women with heart failure are at increased risk for preterm birth. Clinical classification of heart disease may worsen with pregnancy and lead to maternal or fetal death. Pregnant women with atrial fibrillation are at an increased risk of delivering a low birth weight infant. Atrial fibrillation may worsen with pregnancy and can lead to maternal or fetal death. Fetal/neonatal adverse reactions Digoxin has been shown to cross the placenta and is found in amniotic fluid. Monitor neonates for signs and symptoms of digoxin toxicity, including vomiting, and cardiac arrhythmias [see Warnings and Precautions (5.3) ]. Dose adjustments during pregnancy and the postpartum period Digoxin requirements may increase during pregnancy and decrease in the postpartum period. Monitor serum digoxin levels during pregnancy and the postpartum period [see Dosage and Administration (2.5) ]. Labor or Delivery Risk of arrhythmias may increase during the labor and delivery. Monitor patients continuously during labor and delivery [see Warnings and Precautions (5.1 and 5.2) ]."
+  },
+  {
+    "drug_name": "Digoxin 0.125mg",
+    "section": "pediatric_use",
+    "text": "The safety and effectiveness of digoxin in the control of ventricular rate in children with atrial fibrillation have not been established. The safety and effectiveness of digoxin in the treatment of heart failure in children have not been established in adequate and well-controlled studies. However, in published literature of children with heart failure of various etiologies (e.g., ventricular septal defects, anthracycline toxicity, patent ductus arteriosus), treatment with digoxin has been associated with improvements in hemodynamic parameters and in clinical signs and symptoms. Newborn infants display considerable variability in their tolerance to digoxin. Premature and immature infants are particularly sensitive to the effects of digoxin, and the dosage of the drug must not only be reduced but must be individualized according to their degree of maturity."
+  },
+  {
+    "drug_name": "Digoxin 0.125mg",
+    "section": "geriatric_use",
+    "text": "Digoxin showed no genotoxic potential in in vitro studies (Ames test and mouse lymphoma). No data are available on the carcinogenic potential of digoxin, nor have studies been conducted to assess its potential to affect fertility."
+  }
+]

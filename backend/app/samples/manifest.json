@@ -1,0 +1,28 @@
+{
+  "samples": [
+    {
+      "id": "maria_santos_anxiety",
+      "label": "Maria — Anxiety & Insomnia",
+      "description": "Generalized anxiety disorder and insomnia, treated with an SSRI and a short-term sleep aid.",
+      "drugs": ["Sertraline 50mg", "Zolpidem 10mg"]
+    },
+    {
+      "id": "ana_pereira_cholesterol",
+      "label": "Ana — Cholesterol & Thyroid",
+      "description": "High cholesterol and hypothyroidism, treated with a statin and thyroid hormone replacement.",
+      "drugs": ["Atorvastatin 40mg", "Levothyroxine 75mcg"]
+    },
+    {
+      "id": "roberto_alves_polypharmacy",
+      "label": "Roberto — Heart Failure (5 drugs)",
+      "description": "Heart failure, atrial fibrillation and chronic kidney disease on five interacting medications — try the interaction checker.",
+      "drugs": [
+        "Warfarin 5mg",
+        "Furosemide 40mg",
+        "Carvedilol 6.25mg",
+        "Spironolactone 25mg",
+        "Digoxin 0.125mg"
+      ]
+    }
+  ]
+}

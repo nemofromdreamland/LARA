@@ -1,0 +1,37 @@
+[
+  {
+    "drug_name": "Levothyroxine 75mcg",
+    "section": "boxed_warnings",
+    "text": "Thyroid hormones, including levothyroxine sodium tablets, either alone or with other therapeutic agents, should not be used for the treatment of obesity or for weight loss. In euthyroid patients, doses within the range of daily hormonal requirements are ineffective for weight reduction. Larger doses may produce serious or even life-threatening manifestations of toxicity, particularly when given in association with sympathomimetic amines such as those used for their anorectic effects [see Adverse Reactions (6), Drug Interactions ( 7.7 ), and Overdosage ( 10 )] ."
+  },
+  {
+    "drug_name": "Levothyroxine 75mcg",
+    "section": "indications",
+    "text": "Hypothyroidism Levothyroxine sodium tablets are indicated in adult and pediatric patients, including neonates, as a replacement therapy in primary (thyroidal), secondary (pituitary), and tertiary (hypothalamic) congenital or acquired hypothyroidism. Pituitary Thyrotropin (Thyroid-Stimulating Hormone, TSH) Suppression Levothyroxine sodium tablets are indicated in adult and pediatric patients, including neonates, as an adjunct to surgery and radioiodine therapy in the management of thyrotropin-dependent well-differentiated thyroid cancer. Limitations of Use Levothyroxine sodium tablets are not indicated for suppression of benign thyroid nodules and nontoxic diffuse goiter in iodine-sufficient patients as there are no clinical benefits and overtreatment with levothyroxine sodium tablets may induce hyperthyroidism [see Warnings and Precautions ( 5.1 )] . Levothyroxine sodium tablets are not indicated for treatment of hypothyroidism during the recovery phase of subacute thyroiditis."
+  },
+  {
+    "drug_name": "Levothyroxine 75mcg",
+    "section": "contraindications",
+    "text": "Levothyroxine sodium tablets are contraindicated in patients with uncorrected adrenal insufficiency [see Warnings and Precautions ( 5.4 )] ."
+  },
+  {
+    "drug_name": "Levothyroxine 75mcg",
+    "section": "adverse_reactions",
+    "text": "Adverse reactions associated with levothyroxine sodium tablets therapy are primarily those of hyperthyroidism due to therapeutic overdosage [see Warnings and Precautions ( 5 ) and Overdosage ( 10 )] . They include the following: General: fatigue, increased appetite, weight loss, heat intolerance, fever, excessive sweating Central nervous system: headache, hyperactivity, nervousness, anxiety, irritability, emotional lability, insomnia Musculoskeletal: tremors, muscle weakness, muscle spasm Cardiovascular: palpitations, tachycardia, arrhythmias, increased pulse and blood pressure, heart failure, angina, myocardial infarction, cardiac arrest Respiratory: dyspnea Gastrointestinal: diarrhea, vomiting, abdominal cramps, elevations in liver function tests Dermatologic: hair loss, flushing, rash Endocrine: decreased bone mineral density Reproductive: menstrual irregularities, impaired fertility Seizures have been reported rarely with the institution of levothyroxine therapy. Adverse Reactions in Pediatric Patients Pseudotumor cerebri and slipped capital femoral epiphysis have been reported in pediatric patients receiving levothyroxine therapy. Overtreatment may result in craniosynostosis in infants who have not undergone complete closure of the fontanelles, and in premature closure of the epiphyses in pediatric patients still experiencing growth with resultant compromised adult height. Hypersensitivity Reactions Hypersensitivity reactions to inactive ingredients have occurred in patients treated with thyroid hormone products. These include urticaria, pruritus, skin rash, flushing, angioedema, various gastrointestinal symptoms (abdominal pain, nausea, vomiting and diarrhea), fever, arthralgia, serum sickness, and wheezing. Hypersensitivity to levothyroxine itself is not known to occur."
+  },
+  {
+    "drug_name": "Levothyroxine 75mcg",
+    "section": "pregnancy",
+    "text": "Risk Summary The clinical experience, including data from postmarketing studies, in pregnant women treated with oral levothyroxine to maintain euthyroid state have not reported increased rates of major birth defects, miscarriages, or other adverse maternal or fetal outcomes. There are risks to the mother and fetus associated with untreated hypothyroidism in pregnancy. Since TSH levels may increase during pregnancy, TSH should be monitored and levothyroxine sodium tablets dosage adjusted during pregnancy (see Clinical Considerations) . Animal reproductive studies have not been conducted with levothyroxine sodium. Levothyroxine sodium tablets should not be discontinued during pregnancy and hypothyroidism diagnosed during pregnancy should be promptly treated. The estimated background risk of major birth defects and miscarriage for the indicated population is unknown. All pregnancies have a background risk of birth defect, loss, or other adverse outcomes. In the U.S. general population, the estimated background risk of major birth defects and miscarriage in clinically recognized pregnancies is 2% to 4% and 15% to 20%, respectively. Clinical Considerations Disease-Associated Maternal and/or Embryo/Fetal Risk Maternal hypothyroidism during pregnancy is associated with a higher rate of complications, including spontaneous abortion, gestational hypertension, pre-eclampsia, stillbirth, and premature delivery. Untreated maternal hypothyroidism may have an adverse effect on fetal neurocognitive development. Dose Adjustments During Pregnancy and the Postpartum Period Pregnancy may increase levothyroxine sodium tablets requirements. Serum TSH levels should be monitored and the levothyroxine sodium tablets dosage adjusted during pregnancy. Since postpartum TSH levels are similar to preconception values, the levothyroxine sodium tablets dosage should return to the pre-pregnancy dose immediately after delivery [see Dosage and Administration ( 2.3 )] ."
+  },
+  {
+    "drug_name": "Levothyroxine 75mcg",
+    "section": "pediatric_use",
+    "text": "Levothyroxine Sodium Tablets is indicated in patients from birth to less than 17 years of age: As a replacement therapy in primary (thyroidal), secondary (pituitary), and tertiary (hypothalamic) congenital or acquired hypothyroidism. As an adjunct to surgery and radioiodine therapy in the management of thyrotropin-dependent well-differentiated thyroid cancer. Rapid restoration of normal serum T4 concentrations is essential for preventing the adverse effects of congenital hypothyroidism on cognitive development as well as on overall physical growth and maturation. Therefore, initiate levothyroxine sodium tablets therapy immediately upon diagnosis. Levothyroxine is generally continued for life in these patients. [see Warnings and Precautions ( 5.1 )] . Closely monitor infants during the first 2 weeks of levothyroxine sodium tablets therapy for cardiac overload and arrhythmias."
+  },
+  {
+    "drug_name": "Levothyroxine 75mcg",
+    "section": "geriatric_use",
+    "text": "Long-term carcinogenicity studies in animals to evaluate the carcinogenic potential of levothyroxine have not been performed. Studies to evaluate mutagenic potential and animal fertility have not been performed."
+  }
+]
