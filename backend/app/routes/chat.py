@@ -47,11 +47,11 @@ async def chat_stream(
 
     await verify_session_owner(body.session_id, caller_hash)
     embed_executor = getattr(request.app.state, "embed_executor", None)
+    # Fetched before the StreamingResponse is constructed so a Redis outage
+    # surfaces as a proper 503 instead of a 200 with a broken stream.
+    history = [h.model_dump() for h in await session_store.get_history(body.session_id)]
 
     async def event_generator() -> AsyncGenerator[str, None]:
-        history = [
-            h.model_dump() for h in await session_store.get_history(body.session_id)
-        ]
         assistant_tokens: list[str] = []
         async for payload in answer_stream(
             body.session_id, body.question, history, embed_executor

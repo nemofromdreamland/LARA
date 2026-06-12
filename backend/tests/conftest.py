@@ -2,7 +2,9 @@ import fakeredis.aioredis
 import pytest
 from fastapi.testclient import TestClient
 
+import app.services.llm_client as _llm
 import app.services.session_store as _ss
+import app.services.vector_store as _vs
 from app.config import settings
 from app.limiter import limiter as _original_limiter
 from app.main import app
@@ -15,6 +17,26 @@ def _fake_redis():
     _ss._redis = fake
     yield
     _ss._redis = None
+
+
+@pytest.fixture(autouse=True)
+def _reset_client_singletons():
+    """Reset lazily-created client singletons before and after every test.
+
+    Without the app lifespan these are only ever initialised by test code
+    paths; resetting them prevents one test's client (e.g. an AsyncGroq built
+    against a patched settings object) from leaking into the next. The model
+    singletons (embedder._model, reranker._reranker) are deliberately NOT
+    reset — they hold pure weights with no per-test state, and clearing them
+    would force a model reload for every ml-marked test.
+    """
+    _llm._groq_client = None
+    _llm._cerebras_client = None
+    _vs._client = None
+    yield
+    _llm._groq_client = None
+    _llm._cerebras_client = None
+    _vs._client = None
 
 
 @pytest.fixture(autouse=True)

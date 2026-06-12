@@ -1,9 +1,10 @@
 """Unit tests for RedisCircuitBreaker (state shared via fakeredis fixture).
 
-fakeredis cannot execute the Lua script behind record_failure() (requires
-lupa), so breaker state is seeded directly into the failure/last-fail keys;
-the tests exercise the read-side state machine (allow_request, record_success,
-fail-open behaviour).
+The seeded-state tests below exercise the read-side state machine
+(allow_request, record_success, fail-open behaviour) by writing the
+failure/last-fail keys directly. The Lua-path tests at the bottom drive
+record_failure() itself, executing the production EVAL script through
+fakeredis (lupa-backed).
 """
 
 import time
@@ -68,3 +69,73 @@ async def test_fails_open_when_redis_unavailable():
         assert await cb.allow_request() is True
     finally:
         _ss._redis = old
+
+
+# ---------------------------------------------------------------------------
+# record_failure — the real Lua script, executed via fakeredis (lupa)
+# ---------------------------------------------------------------------------
+
+
+async def test_record_failure_increments_counter_and_stamps_time():
+    cb = RedisCircuitBreaker("test-lua-incr", failure_threshold=5)
+    before = time.time()
+    await cb.record_failure()
+    await cb.record_failure()
+
+    r = _ss._get_redis()
+    assert int(await r.get("cb:test-lua-incr:failures")) == 2
+    last_fail = float(await r.get("cb:test-lua-incr:last_fail"))
+    assert before <= last_fail <= time.time()
+
+
+async def test_record_failure_sets_ttl_on_both_keys():
+    cb = RedisCircuitBreaker("test-lua-ttl", failure_threshold=3, cooldown_seconds=60.0)
+    await cb.record_failure()
+
+    r = _ss._get_redis()
+    # TTL is cooldown_seconds * 10 so stuck state self-heals.
+    for key in ("cb:test-lua-ttl:failures", "cb:test-lua-ttl:last_fail"):
+        ttl = await r.ttl(key)
+        assert 0 < ttl <= 600
+
+
+async def test_opens_after_threshold_record_failure_calls():
+    cb = RedisCircuitBreaker("test-lua-open", failure_threshold=2, cooldown_seconds=60)
+    assert await cb.allow_request() is True
+
+    await cb.record_failure()
+    assert await cb.allow_request() is True  # 1/2 — still CLOSED
+
+    await cb.record_failure()
+    assert await cb.allow_request() is False  # 2/2 — OPEN
+
+
+async def test_half_open_probe_failure_reopens():
+    cb = RedisCircuitBreaker(
+        "test-lua-reopen", failure_threshold=1, cooldown_seconds=60
+    )
+    await cb.record_failure()
+    assert await cb.allow_request() is False  # OPEN
+
+    with patch(
+        "app.services.circuit_breaker.time.time",
+        return_value=time.time() + 61,
+    ):
+        assert await cb.allow_request() is True  # HALF_OPEN probe
+
+    # The probe fails: record_failure restamps last_fail to now → OPEN again.
+    await cb.record_failure()
+    assert await cb.allow_request() is False
+
+
+async def test_success_after_failures_closes_and_clears_keys():
+    cb = RedisCircuitBreaker("test-lua-close", failure_threshold=1)
+    await cb.record_failure()
+    assert await cb.allow_request() is False
+
+    await cb.record_success()
+    assert await cb.allow_request() is True
+
+    r = _ss._get_redis()
+    assert await r.get("cb:test-lua-close:failures") is None
+    assert await r.get("cb:test-lua-close:last_fail") is None
