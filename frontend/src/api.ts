@@ -76,6 +76,43 @@ export async function uploadPrescription(
 }
 
 
+export interface SampleInfo {
+  id: string
+  label: string
+  description: string
+  drugs: string[]
+}
+
+export async function listSamples(): Promise<SampleInfo[]> {
+  const res = await fetch(`${BASE}/samples`, { headers: { 'X-API-Key': API_KEY } })
+  if (!res.ok) throw new Error('Failed to load samples')
+  const data = await res.json()
+  return data.samples as SampleInfo[]
+}
+
+export async function loadSample(
+  sessionId: string,
+  sampleId: string,
+  signal?: AbortSignal,
+): Promise<{ drugs_found: string[]; missing_leaflets: string[]; status: string }> {
+  const res = await fetch(`${BASE}/samples/${encodeURIComponent(sampleId)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
+    body: JSON.stringify({ session_id: sessionId }),
+    signal,
+  })
+  if (res.status === 410) throw new SessionExpiredError()
+  if (res.status === 429) {
+    throw new Error("You're sending requests too quickly. Please wait a moment and try again.")
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Sample failed to load' }))
+    throw new Error(err.detail ?? 'Sample failed to load')
+  }
+  const { job_id } = await res.json()
+  return pollJobStatus(job_id, sessionId, 120_000, signal)
+}
+
 export async function* streamQuestion(
   sessionId: string,
   question: string,
