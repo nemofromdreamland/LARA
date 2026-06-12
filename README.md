@@ -1,41 +1,73 @@
 # ![LARA mascot](frontend/public/mascot.png) LARA — Leaflet Assistant RAG Application
 
-Upload a prescription PDF and ask questions about your medications — answers grounded in official FDA drug leaflets from DailyMed (NLM).
+[![CI](https://github.com/nemofromdreamland/LARA/actions/workflows/ci.yml/badge.svg)](https://github.com/nemofromdreamland/LARA/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+Upload a prescription PDF and ask questions about your medications — answers grounded in official FDA drug leaflets from [DailyMed](https://dailymed.nlm.nih.gov/dailymed/) (U.S. National Library of Medicine), streamed token-by-token with per-answer source citations.
+
+<!-- TODO: record a 30-second demo (upload → drugs extracted → streamed answer with sources)
+     and embed it here:  ![LARA demo](docs/demo.gif) -->
 
 ## How It Works
 
-1. You upload a prescription PDF
-2. LARA extracts drug names from the text
-3. Official leaflet data is fetched from DailyMed (NLM)
-4. Leaflets are chunked, embedded, and stored in a session-scoped vector database
-5. You ask questions in a chat interface
-6. Answers are generated **only** from the retrieved leaflet context — no hallucination
+1. You upload a prescription PDF; ingestion runs as an async job (HTTP 202 + status polling)
+2. LARA extracts structured medication entries (drug, dosage, frequency) — LLM-first, with regex/spaCy fallback tiers, behind a prompt-injection quarantine
+3. Official leaflet sections are fetched from DailyMed and cached in Redis
+4. Leaflets are chunked, embedded locally (PubMedBERT), and stored in a **per-session ChromaDB collection**
+5. You ask questions in a chat interface; retrieval is per-drug (every prescribed drug gets representation), reranked by a local cross-encoder, and trimmed to a token budget
+6. Answers stream over SSE, generated **only** from the retrieved leaflet context; the LLM must cite which `drug/section` labels it used, and the source list is filtered to those citations
+
+## Architecture
+
+```text
+Browser ──► frontend (nginx :5173)
+              ├── serves the React SPA
+              └── /api/* ──► backend (FastAPI + gunicorn×2, no host port)
+                              ├── RAG pipeline: chunk → embed → store → retrieve
+                              │                 → rerank → trim → generate
+                              ├── embedder: sentence-transformers PubMedBERT (local)
+                              ├── reranker: BAAI/bge-reranker-base (local)
+                              ├── LLM: Groq (Llama 3.3 70B) ──► Cerebras fallback,
+                              │        Redis-backed circuit breakers per provider
+                              ├── DailyMed client (httpx + tenacity, Redis cache)
+                              ├── chroma (vector store, server mode) ── per-session collections
+                              └── redis (sessions, chat history, upload jobs,
+                                         rate limits, circuit-breaker state)
+```
+
+Four Docker services: `frontend`, `backend`, `redis`, `chroma`. The backend deliberately has **no published host port** — all traffic goes through the nginx proxy, so clients can't spoof the `X-Real-IP` header that rate limiting keys on.
+
+Design rationale and trade-offs: see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Prerequisites
 
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows/Mac/Linux)
-- A free [Groq API key](https://console.groq.com/keys)
+- A free [Groq API key](https://console.groq.com/keys) (optionally a [Cerebras](https://cloud.cerebras.ai) key for the fallback provider)
 
 ## Setup
 
 ### 1. Clone the repo
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/nemofromdreamland/LARA.git
 cd LARA
 ```
 
-### 2. Configure environment variables
+### 2. Configure environment variables (two files)
 
 ```bash
-cp .env.example .env
+cp .env.example backend/.env   # read by the backend container (env_file)
+cp .env.example .env           # read by docker-compose for the frontend build arg
 ```
 
-Edit `.env` and fill in your API keys:
+Edit **`backend/.env`** and set:
 
+```ini
+LARA_API_KEY=<a strong random secret>   # e.g. `openssl rand -base64 32`
+GROQ_API_KEY=<your Groq API key>
 ```
-GROQ_API_KEY=your_groq_api_key_here
-```
+
+Edit **`.env`** (repo root) and set `LARA_API_KEY` to the **same value** — docker-compose injects it into the frontend bundle at build time. If you rotate the key, change both files and rebuild the frontend image.
 
 ### 3. Start with Docker Compose
 
@@ -43,99 +75,94 @@ GROQ_API_KEY=your_groq_api_key_here
 docker-compose up --build
 ```
 
-| Service | URL |
-|---------|-----|
-| Frontend | http://localhost:5173 |
-| Backend API | http://localhost:8000 |
-| API docs (Swagger) | http://localhost:8000/docs |
+> First boot downloads the two local ML models (PubMedBERT embedder + bge reranker, ~1 GB total) into a Docker volume — the backend healthcheck allows up to 5 minutes for this. Subsequent starts are fast.
+
+Open <http://localhost:5173> — the SPA and the API (proxied under `/api/`) are both served by nginx.
+
+The backend is not directly reachable from the host in Docker. For Swagger/OpenAPI docs, run the backend locally (below) and open <http://localhost:8000/docs>.
 
 ### 4. Stop
 
 ```bash
-docker-compose down
+docker-compose down       # keep data
+docker-compose down -v    # also remove vector DB, Redis data, and model cache
 ```
 
-To also remove the persisted vector database:
+## Local Development (backend)
+
+Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installation/). The backend needs Redis and ChromaDB, which you can run from the same compose file:
 
 ```bash
-docker-compose down -v
-```
+docker-compose up -d redis chroma   # Redis on :6379, Chroma on :8001
 
-## Local Development (backend only)
-
-Requires Python 3.11+ and [uv](https://docs.astral.sh/uv/getting-started/installation/).
-
-```bash
 cd backend
-uv sync --dev        # install all dependencies
-cp ../.env.example .env   # configure env vars
-uv run task dev      # start dev server on :8000
+uv sync --dev                  # install all dependencies
+cp ../.env.example .env        # then set LARA_API_KEY + GROQ_API_KEY
+uv run task dev                # dev server on :8000 (Swagger at /docs)
 ```
 
 ### Available tasks
 
 ```bash
-uv run task test       # run pytest
-uv run task test-v     # pytest verbose
-uv run task lint       # ruff check
-uv run task fmt        # ruff format
-uv run task check      # fmt-check + lint + test (CI gate)
+uv run task test         # full pytest suite (loads real ML models)
+uv run task test-light   # suite without ml-marked tests (what CI runs)
+uv run task lint         # ruff check
+uv run task fmt          # ruff format
+uv run task check        # fmt-check + lint + test (CI gate, 80% coverage minimum)
 ```
+
+## API
+
+All endpoints except `GET /health` require the `X-API-Key` header.
+
+| Method | Endpoint | Body / params | Response |
+|--------|----------|---------------|----------|
+| POST | `/session` | — | `{ session_id }` |
+| POST | `/upload` | `session_id`, `file` (PDF, ≤20 MB) | **202** `{ job_id, status: "processing" }` |
+| GET | `/upload/status/{job_id}` | `?session_id=` | `{ status, drugs_found[], missing_leaflets[], error }` |
+| POST | `/chat` | `{ session_id, question }` | `{ answer, sources[] }` |
+| POST | `/chat/stream` | `{ session_id, question }` | SSE: `token` / `reset` / `sources` / `done` events |
+| POST | `/interactions` | `{ session_id }` | `{ pairs_checked, interactions[] }` — lexical scan of official *Drug Interactions* sections (name matches only; not a pharmacological model) |
+| GET | `/health` | — | `{ status, components }`; **503** when degraded |
+| GET | `/metrics` | — | Prometheus metrics |
+
+Sessions are isolated by `session_id` (UUID) with a 2-hour TTL — no login. An expired session returns **410** and the frontend transparently starts a new one. Conversation history lives server-side in Redis.
 
 ## Environment Variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `GROQ_API_KEY` | Yes | — | Groq API key for Llama 3.3 70B inference |
-| `CEREBRAS_API_KEY` | No | — | Fallback LLM provider |
-| `LLM_PROVIDER` | No | `groq` | Active provider: `groq` or `cerebras` |
-| `CHROMA_PATH` | No | `/data/chroma` | ChromaDB persistence directory |
+| `LARA_API_KEY` | **Yes** | — | Static API key checked on every request (timing-safe); also baked into the frontend bundle at build time |
+| `GROQ_API_KEY` | Yes* | — | Groq API key for Llama 3.3 70B inference (*required when `LLM_PROVIDER=groq`, the default) |
+| `CEREBRAS_API_KEY` | No | — | Fallback LLM provider (same model family) |
+| `LLM_PROVIDER` | No | `groq` | Primary provider: `groq` or `cerebras` |
+| `REDIS_URL` | No | `redis://localhost:6379/0` | Redis connection (compose overrides to the `redis` service) |
+| `CHROMA_HOST` / `CHROMA_PORT` | No | `localhost` / `8001` | ChromaDB server (compose overrides to the `chroma` service) |
 | `FRONTEND_ORIGIN` | No | `http://localhost:5173` | CORS allowed origin |
+| `RERANKER_ENABLED` | No | `true` | Toggle the cross-encoder reranking stage |
 
-## Architecture
+Tuning knobs (retrieval top-k and distance threshold, context token budget, rate limits, circuit-breaker thresholds, thread-pool sizes, TTLs) are all env-configurable — see [`backend/app/config.py`](backend/app/config.py).
 
-```
-User → Frontend (React/Vite)
-         ↓ HTTP
-       Backend (FastAPI)
-         ├── PDF Parser (PyMuPDF)
-         ├── Drug Extractor (regex)
-         ├── DailyMed Client (httpx + tenacity)
-         ├── Chunker (sliding window)
-         ├── Embedder (sentence-transformers, local)
-         ├── Vector Store (ChromaDB, local)
-         └── LLM Client (Groq → Cerebras fallback)
-```
+## Testing & CI
 
-Sessions are isolated by `session_id` (UUID) — no login required.
+- ~4,300 lines of tests against ~2,400 lines of application code; 80% coverage gate.
+- Redis behaviour (including the circuit breaker's Lua script) is tested against `fakeredis[lua]` — no Redis server needed.
+- Tests that load real ML model weights are marked `ml`. The [PR pipeline](.github/workflows/ci.yml) runs everything else fully offline (`HF_HUB_OFFLINE=1` guarantees no silent model downloads); a [weekly workflow](.github/workflows/ci-full.yml) runs the full suite with real models.
 
 ## Troubleshooting
 
-**`docker-compose up` fails on port conflict**
-```bash
-# Check what's using the port
-netstat -ano | findstr :8000
-# Change ports in docker-compose.yml if needed
-```
+**`docker-compose up` fails: `env file ./backend/.env not found`** — you skipped Setup step 2; both env files are required.
 
-**`uv sync` fails — Python version mismatch**
+**Frontend loads but every request returns 401** — `LARA_API_KEY` differs between root `.env` and `backend/.env`. Set them to the same value and rebuild: `docker-compose up --build frontend`.
 
-Ensure Python 3.11+ is installed:
-```bash
-python --version
-uv python install 3.11
-```
+**Backend stays unhealthy for several minutes on first start** — it is downloading the embedding and reranker models; watch progress with `docker-compose logs -f backend`.
 
-**DailyMed API returns no results for a drug**
+**DailyMed returns no leaflet for a drug** — DailyMed covers FDA-approved drugs; generic names work best (e.g. `lisinopril` rather than `Prinivil`). Missing drugs are reported per-upload in `missing_leaflets`.
 
-DailyMed covers FDA-approved drugs. Generic names work best (e.g., `lisinopril` not `Prinivil`). Brand names are also indexed but may have multiple entries.
-
-**Groq rate limit (429)**
-
-Free tier limit is 6,000 tokens/minute. Set `LLM_PROVIDER=cerebras` in `.env` as a fallback.
+**Groq rate limit (429)** — handled automatically: the request falls back to Cerebras (if `CEREBRAS_API_KEY` is set), and a Redis-backed circuit breaker stops hammering Groq until its cooldown expires. Without a Cerebras key, sustained 429s surface as 503s.
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT — see [LICENSE](LICENSE).
 
-Drug leaflet data is sourced from [DailyMed](https://dailymed.nlm.nih.gov/dailymed/) (U.S. National Library of Medicine), public domain.
+Drug leaflet data is sourced from [DailyMed](https://dailymed.nlm.nih.gov/dailymed/) (U.S. National Library of Medicine), public domain. LARA provides information from official drug leaflets only and is not a substitute for professional medical advice.
