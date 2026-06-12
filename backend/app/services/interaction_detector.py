@@ -1,3 +1,17 @@
+"""Cross-drug mention scanner over official Drug Interactions leaflet sections.
+
+This is deliberately a lexical heuristic, not a pharmacological model: for each
+drug pair (A, B) it flags B when B's name appears as a whole word inside A's
+``drug_interactions`` leaflet section, with a supporting excerpt.
+
+Known limitations:
+- Matches names only — it will miss interactions phrased via brand names,
+  ingredient synonyms, or drug *classes* (e.g. lisinopril's leaflet warning
+  about "ACE inhibitors" won't flag another ACE inhibitor by class).
+- It reports what the FDA leaflet says, nothing more; absence of a flag is not
+  evidence of safety. Consumers of /interactions must present it that way.
+"""
+
 import re
 
 from app.models.schemas import InteractionFlag
