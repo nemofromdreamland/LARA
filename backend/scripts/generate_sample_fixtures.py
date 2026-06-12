@@ -34,9 +34,7 @@ LEAFLETS_DIR = SAMPLES_DIR / "leaflets"
 
 async def main() -> int:
     manifest = json.loads((SAMPLES_DIR / "manifest.json").read_text(encoding="utf-8"))
-    drugs = {
-        drug for sample in manifest["samples"] for drug in sample["drugs"]
-    }
+    drugs = {drug for sample in manifest["samples"] for drug in sample["drugs"]}
     LEAFLETS_DIR.mkdir(parents=True, exist_ok=True)
 
     failed: list[str] = []

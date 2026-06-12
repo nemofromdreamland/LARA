@@ -42,6 +42,21 @@ class JobStatusResponse(BaseModel):
     error: str | None = None
 
 
+class SampleInfo(BaseModel):
+    id: str
+    label: str
+    description: str
+    drugs: list[str]
+
+
+class SampleListResponse(BaseModel):
+    samples: list[SampleInfo]
+
+
+class SampleLoadRequest(BaseModel):
+    session_id: str = Field(min_length=36, max_length=36)
+
+
 class Source(BaseModel):
     drug_name: str
     section: str
