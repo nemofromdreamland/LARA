@@ -1,6 +1,12 @@
 from concurrent.futures import ThreadPoolExecutor
 
+import pytest
+
 from app.services.embedder import embed
+
+# Every test here loads the real PubMedBERT model (~400 MB download on first
+# run) and asserts real-model semantics; excluded from CI via `-m "not ml"`.
+pytestmark = pytest.mark.ml
 
 _EMBEDDING_DIM = 768
 

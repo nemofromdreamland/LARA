@@ -84,6 +84,9 @@ def test_chat_missing_fields_returns_422(client: TestClient):
     assert response.status_code == 422
 
 
+# rerank() is intentionally NOT patched here, so the real cross-encoder runs
+# inside the pipeline (reranker_enabled defaults to True) — hence the ml mark.
+@pytest.mark.ml
 @patch("app.services.rag_pipeline.retrieve", new_callable=AsyncMock)
 @patch("app.services.rag_pipeline.embed", new_callable=AsyncMock)
 @patch("app.services.rag_pipeline.generate", new_callable=AsyncMock)

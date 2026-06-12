@@ -1,0 +1,38 @@
+name: CI Full (real ML models)
+
+# Runs the complete backend suite, including the ml-marked tests that load
+# real Hugging Face models (PubMedBERT embedder + bge-reranker cross-encoder).
+# Not wired to pull requests on purpose — never a required check.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+
+jobs:
+  backend-full:
+    name: Backend full suite (downloads models)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Cache Hugging Face models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-models-pubmedbert-bge-reranker-base-v1
+
+      - name: Install dependencies (locked)
+        run: uv sync --frozen --dev
+
+      - name: Full test suite (includes ml-marked tests)
+        run: uv run task test
