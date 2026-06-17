@@ -145,7 +145,7 @@ async def _retrieve_diverse(
     Guarantees at least one chunk per drug when multiple drugs are in the session,
     preventing a single drug from monopolising all top-k slots.
     """
-    per_drug_k = max(2, math.ceil(settings.retrieval_top_k / len(drugs)))
+    per_drug_k = max(4, math.ceil(settings.retrieval_top_k / len(drugs)))
     per_drug_results = await asyncio.gather(
         *[
             retrieve(query_embedding, session_id, top_k=per_drug_k, drug_name=drug)
@@ -226,6 +226,8 @@ async def _prepare_context(
 
     remaining_budget = settings.max_context_tokens - len(_enc.encode(prescription_text))
     chunks = trim_to_budget(chunks, max_tokens=max(0, remaining_budget))
+    if not chunks:
+        return None
 
     context_parts.extend(
         f"[{c['drug_name']} — {c['section']}]\n{c['text']}" for c in chunks

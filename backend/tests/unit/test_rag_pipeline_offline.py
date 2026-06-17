@@ -226,14 +226,14 @@ async def test_retrieve_diverse_merges_dedupes_and_sorts_by_distance():
 
 
 async def test_retrieve_diverse_splits_top_k_across_drugs():
-    """per-drug k = max(2, ceil(top_k / n_drugs)) — 8 across 2 drugs → 4 each."""
+    """per-drug k = max(4, ceil(top_k / n_drugs)) — 20 across 2 drugs → 10 each."""
     mock_retrieve = AsyncMock(return_value=[])
 
     with patch("app.services.rag_pipeline.retrieve", mock_retrieve):
         await _retrieve_diverse([0.1] * 768, "sess-1", ["drugA", "drugB"])
 
     assert mock_retrieve.await_count == 2
-    assert all(c.kwargs["top_k"] == 4 for c in mock_retrieve.await_args_list)
+    assert all(c.kwargs["top_k"] == 10 for c in mock_retrieve.await_args_list)
 
 
 # ---------------------------------------------------------------------------

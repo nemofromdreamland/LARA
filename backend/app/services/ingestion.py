@@ -85,9 +85,18 @@ async def run_ingestion(
                 )
                 missing_drugs.append(drug)
                 continue
-            embeddings = await embed(chunks, embed_executor)
-            await store(chunks, embeddings, metas, session_id=session_id)
-            stored_drugs.append(drug)
+            try:
+                embeddings = await embed(chunks, embed_executor)
+                await store(chunks, embeddings, metas, session_id=session_id)
+                stored_drugs.append(drug)
+            except Exception as store_exc:
+                logger.warning(
+                    "Failed to embed/store chunks for %s: %s",
+                    drug,
+                    store_exc,
+                    extra={"request_id": rid},
+                )
+                missing_drugs.append(drug)
 
         await save_upload_result(session_id, stored_drugs, missing_drugs)
         await save_job_status(
