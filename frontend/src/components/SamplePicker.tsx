@@ -24,23 +24,29 @@ export default function SamplePicker({ samples, onSelect, loadingId, disabled }:
         {samples.map((s) => (
           <button
             key={s.id}
-            title={s.description}
             onClick={() => onSelect(s.id)}
             className={`
-              text-xs font-medium px-3 py-1.5 min-h-[44px] flex items-center gap-1.5 rounded-full
+              text-xs font-medium px-4 py-2 min-h-[44px] flex flex-col items-center justify-center gap-0.5 rounded-2xl
               bg-surface-low dark:bg-surface-low-d text-secondary dark:text-secondary-d
               hover:bg-secondary-container dark:hover:bg-secondary-container-d
               hover:text-navy dark:hover:text-navy-d transition-colors
               ${disabled ? 'opacity-60 pointer-events-none' : ''}
             `}
           >
-            {loadingId === s.id && (
-              <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-              </svg>
+            <span className="flex items-center gap-1.5">
+              {loadingId === s.id && (
+                <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                </svg>
+              )}
+              {s.label}
+            </span>
+            {s.description && (
+              <span className="text-xs font-normal text-secondary/70 dark:text-secondary-d/70 leading-tight max-w-[180px] text-center">
+                {s.description}
+              </span>
             )}
-            {s.label}
           </button>
         ))}
       </div>

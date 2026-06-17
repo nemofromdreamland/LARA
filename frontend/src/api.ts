@@ -113,6 +113,28 @@ export async function loadSample(
   return pollJobStatus(job_id, sessionId, 120_000, signal)
 }
 
+export interface InteractionFlag {
+  drug_a: string
+  drug_b: string
+  excerpt: string
+}
+
+export interface InteractionsResult {
+  pairs_checked: number
+  interactions: InteractionFlag[]
+}
+
+export async function checkInteractions(sessionId: string): Promise<InteractionsResult> {
+  const res = await fetch(`${BASE}/interactions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
+    body: JSON.stringify({ session_id: sessionId }),
+  })
+  if (res.status === 410) throw new SessionExpiredError()
+  if (!res.ok) throw new Error('Interaction check failed')
+  return res.json() as Promise<InteractionsResult>
+}
+
 export async function* streamQuestion(
   sessionId: string,
   question: string,
