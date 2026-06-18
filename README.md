@@ -123,25 +123,27 @@ uv run task test         # full pytest suite (loads real ML models)
 uv run task test-light   # suite without ml-marked tests (what CI runs)
 uv run task lint         # ruff check
 uv run task fmt          # ruff format
-uv run task check        # fmt-check + lint + test (CI gate, 80% coverage minimum)
+uv run task check        # fmt-check + lint + test (full suite incl. ML; 80% coverage min)
 ```
 
 ## API
 
-All endpoints except `GET /health` require the `X-API-Key` header.
+All endpoints except `GET /health` require the `X-API-Key` header. Session-scoped endpoints (`/upload`, `/upload/status`, `/chat`, `/chat/stream`, `/interactions`, `POST /samples/{id}`) additionally require the `X-Session-Token` header returned by `POST /session`; a missing or mismatched token returns **403**.
 
 | Method | Endpoint | Body / params | Response |
 |--------|----------|---------------|----------|
-| POST | `/session` | — | `{ session_id }` |
+| POST | `/session` | — | `{ session_id, session_token }` |
 | POST | `/upload` | `session_id`, `file` (PDF, ≤20 MB) | **202** `{ job_id, status: "processing" }` |
 | GET | `/upload/status/{job_id}` | `?session_id=` | `{ status, drugs_found[], missing_leaflets[], error }` |
+| GET | `/samples` | — | `{ samples[] }` — bundled demo prescriptions (no `X-Session-Token`) |
+| POST | `/samples/{sample_id}` | `{ session_id }` | **202** `{ job_id, status: "processing" }` — same job contract as `/upload` |
 | POST | `/chat` | `{ session_id, question }` | `{ answer, sources[] }` |
 | POST | `/chat/stream` | `{ session_id, question }` | SSE: `token` / `reset` / `sources` / `done` events |
 | POST | `/interactions` | `{ session_id }` | `{ pairs_checked, interactions[] }` — lexical scan of official *Drug Interactions* sections (name matches only; not a pharmacological model) |
 | GET | `/health` | — | `{ status, components }`; **503** when degraded |
 | GET | `/metrics` | — | Prometheus metrics |
 
-Sessions are isolated by `session_id` (UUID) with a 2-hour TTL — no login. An expired session returns **410** and the frontend transparently starts a new one. Conversation history lives server-side in Redis.
+Sessions are isolated by `session_id` (UUID) with a 2-hour TTL — no login. Each session also gets a high-entropy `session_token` (returned once from `POST /session`; only its hash is stored server-side) that the client sends as `X-Session-Token` to prove ownership. An expired session returns **410** and the frontend transparently starts a new one. Conversation history lives server-side in Redis.
 
 ## Environment Variables
 
@@ -156,11 +158,11 @@ Sessions are isolated by `session_id` (UUID) with a 2-hour TTL — no login. An 
 | `FRONTEND_ORIGIN` | No | `http://localhost:5173` | CORS allowed origin |
 | `RERANKER_ENABLED` | No | `true` | Toggle the cross-encoder reranking stage |
 
-Tuning knobs (retrieval top-k and distance threshold, context token budget, rate limits, circuit-breaker thresholds, thread-pool sizes, TTLs) are all env-configurable — see [`backend/app/config.py`](backend/app/config.py).
+Tuning knobs (retrieval top-k and distance threshold, context token budget, rate limits, the Cerebras circuit-breaker threshold/cooldown, thread-pool sizes, TTLs) are env-configurable — see [`backend/app/config.py`](backend/app/config.py). (The Groq breaker's threshold/cooldown are fixed in code.)
 
 ## Testing & CI
 
-- ~4,300 lines of tests against ~2,400 lines of application code; 80% coverage gate.
+- ~5,400 lines of tests against ~3,500 lines of application code; 80% coverage gate.
 - Redis behaviour (including the circuit breaker's Lua script) is tested against `fakeredis[lua]` — no Redis server needed.
 - Tests that load real ML model weights are marked `ml`. The [PR pipeline](.github/workflows/ci.yml) runs everything else fully offline (`HF_HUB_OFFLINE=1` guarantees no silent model downloads); a [weekly workflow](.github/workflows/ci-full.yml) runs the full suite with real models.
 
