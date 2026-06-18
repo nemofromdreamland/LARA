@@ -336,8 +336,6 @@ async def answer_stream(
 
     _, cited = strip_cited_line("".join(accumulated))
     filtered = _filter_sources_by_cited(_deduplicate_sources(chunks), cited)
-    sources = [
-        {"drug_name": s.drug_name, "section": s.section} for s in filtered
-    ]
+    sources = [{"drug_name": s.drug_name, "section": s.section} for s in filtered]
     yield "[SOURCES]" + json.dumps({"sources": sources})
     yield "[DONE]"
