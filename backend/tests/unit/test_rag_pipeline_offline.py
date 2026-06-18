@@ -133,7 +133,7 @@ async def test_answer_enriches_embedding_query_with_last_user_turn():
 
 
 async def test_answer_drops_chunks_beyond_distance_threshold():
-    """Chunks at or above the 0.65 distance threshold must not reach the LLM."""
+    """Chunks at or above the 0.75 distance threshold must not reach the LLM."""
     mocks = _patches(
         retrieve=AsyncMock(return_value=[_chunk("Irrelevant.", distance=0.9)])
     )
@@ -277,6 +277,37 @@ async def test_answer_stream_no_chunks_streams_fallback_then_empty_sources():
     assert json.loads(payloads[1][len("[SOURCES]") :]) == {"sources": []}
     assert payloads[2] == "[DONE]"
     assert len(payloads) == 3
+
+
+async def test_stream_sources_equal_nonstream_sources():
+    """/chat and /chat/stream must return identical sources for the same input:
+    both filter to the (drug, section) pairs the LLM actually cited."""
+    chunks = [
+        _chunk("Take once daily.", distance=0.1, section="dosage"),
+        _chunk("Do not use in pregnancy.", distance=0.2, section="warnings"),
+    ]
+    # LLM cites only dosage, so warnings must be filtered out on both paths.
+    full_answer = "Take once daily.\nCITED: lisinopril/dosage"
+
+    nonstream_mocks = _patches(
+        retrieve=AsyncMock(return_value=chunks),
+        generate=AsyncMock(return_value=full_answer),
+    )
+    with _SeamPatcher(nonstream_mocks):
+        non_stream = await answer("sess-1", "How often?")
+
+    stream_mocks = _patches(retrieve=AsyncMock(return_value=chunks))
+    del stream_mocks["generate"]  # streaming path uses generate_stream
+    stream_mocks["generate_stream"] = _fake_stream(full_answer)
+    with _SeamPatcher(stream_mocks):
+        payloads = [p async for p in answer_stream("sess-1", "How often?")]
+
+    stream_sources = json.loads(payloads[-2][len("[SOURCES]") :])["sources"]
+    expected = [
+        {"drug_name": s.drug_name, "section": s.section} for s in non_stream.sources
+    ]
+    assert stream_sources == expected
+    assert stream_sources == [{"drug_name": "lisinopril", "section": "dosage"}]
 
 
 async def test_answer_stream_deduplicates_sources_across_chunks():

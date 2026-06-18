@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     session_ttl_seconds: int = Field(default=7200, ge=300)  # min 5 min, default 2 hours
     max_context_tokens: int = 8192
+    max_history_tokens: int = Field(default=1024, ge=0)
     retrieval_distance_threshold: float = Field(default=0.75, ge=0.0, le=2.0)
     retrieval_top_k: int = Field(default=20, ge=1, le=50)
     dailymed_cache_ttl_seconds: int = 86_400

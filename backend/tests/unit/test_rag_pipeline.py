@@ -17,6 +17,13 @@ def _tok(text: str) -> int:
     return len(_enc.encode(text))
 
 
+def _cost(chunk: dict) -> int:
+    """Full budget cost of a chunk: the '[drug — section]' header plus its text,
+    matching how trim_to_budget now counts each chunk."""
+    header = f"[{chunk['drug_name']} — {chunk['section']}]\n"
+    return _tok(header + chunk["text"])
+
+
 # ---------------------------------------------------------------------------
 # trim_to_budget — all chunks fit
 # ---------------------------------------------------------------------------
@@ -37,7 +44,7 @@ def test_all_chunks_fit_returned_sorted_by_distance():
 
 def test_all_chunks_fit_exact_budget():
     chunks = [_chunk("x" * 50, distance=0.2), _chunk("y" * 50, distance=0.1)]
-    budget = sum(_tok(c["text"]) for c in chunks)
+    budget = sum(_cost(c) for c in chunks)
     result = trim_to_budget(chunks, max_tokens=budget)
     assert len(result) == 2
 
@@ -54,11 +61,24 @@ def test_overflow_drops_least_relevant_chunks():
         _chunk("C" * 100, distance=0.3),  # third — would exceed budget → drop
     ]
     # budget fits exactly the two most-relevant chunks
-    budget = _tok("A" * 100) + _tok("B" * 100)
+    budget = _cost(chunks[0]) + _cost(chunks[1])
     result = trim_to_budget(chunks, max_tokens=budget)
 
     assert len(result) == 2
     assert all(c["distance"] < 0.25 for c in result)
+
+
+def test_trim_to_budget_counts_chunk_header():
+    """A chunk that fits on text alone but overflows once its '[drug — section]'
+    header is counted must be dropped."""
+    chunk = _chunk("A" * 100, distance=0.1)
+    text_only = _tok(chunk["text"])
+    assert text_only < _cost(chunk)  # header adds real cost
+
+    # Budget equals text-only token count → too small once the header is counted.
+    assert trim_to_budget([chunk], max_tokens=text_only) == []
+    # Budget covering header + text → the chunk fits.
+    assert trim_to_budget([chunk], max_tokens=_cost(chunk)) == [chunk]
 
 
 def test_overflow_single_chunk_too_large_returns_empty():
@@ -73,8 +93,8 @@ def test_overflow_preserves_most_relevant_order():
         _chunk("A" * 80, distance=0.05),
         _chunk("M" * 80, distance=0.2),
     ]
-    # budget fits the two most-relevant chunks
-    budget = _tok("A" * 80) + _tok("M" * 80)
+    # budget fits the two most-relevant chunks (distance 0.05 and 0.2)
+    budget = _cost(chunks[1]) + _cost(chunks[2])
     result = trim_to_budget(chunks, max_tokens=budget)
 
     assert len(result) == 2
@@ -101,8 +121,8 @@ def test_prescription_summary_counted_before_chunks():
     ]
     kept = trim_to_budget(chunks, max_tokens=remaining)
 
-    # Total tokens = prescription + kept chunks must not exceed max_context
-    total_tokens = prescription_tokens + sum(_tok(c["text"]) for c in kept)
+    # Total tokens = prescription + kept chunks (incl. headers) must not exceed budget
+    total_tokens = prescription_tokens + sum(_cost(c) for c in kept)
     assert total_tokens <= max_context
 
 
@@ -158,8 +178,8 @@ def test_trim_to_budget_sorts_by_rerank_score_when_present():
         _chunk_reranked("B" * 100, rerank_score=0.9, distance=0.4),  # highest rerank
         _chunk_reranked("C" * 100, rerank_score=0.6, distance=0.2),
     ]
-    # budget fits only the two highest-reranked chunks
-    budget = _tok("B" * 100) + _tok("C" * 100)
+    # budget fits only the two highest-reranked chunks (B and C)
+    budget = _cost(chunks[1]) + _cost(chunks[2])
     result = trim_to_budget(chunks, max_tokens=budget)
 
     assert len(result) == 2

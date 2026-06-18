@@ -234,6 +234,81 @@ async def test_falls_back_to_cerebras_on_internal_server_error(
 
 
 # ---------------------------------------------------------------------------
+# Empty/blank Groq completion → transient → Cerebras fallback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("empty_content", [None, "", "   "])
+@patch("app.services.llm_client.settings")
+@patch("app.services.llm_client.httpx.AsyncClient")
+@patch("app.services.llm_client.AsyncGroq")
+@patch("app.services.llm_client._groq_breaker")
+async def test_empty_groq_content_falls_back_to_cerebras(
+    mock_breaker, mock_groq_cls, mock_client_cls, mock_settings, empty_content
+):
+    """A None/blank Groq completion is treated as transient, routing to Cerebras."""
+    from app.config import LLMProvider
+
+    mock_settings.llm_provider = LLMProvider.groq
+    mock_settings.groq_api_key = "fake-key"
+    mock_settings.cerebras_api_key = "fake-cerebras-key"
+    mock_breaker.allow_request = AsyncMock(return_value=True)
+    mock_breaker.record_failure = AsyncMock()
+    mock_breaker.record_success = AsyncMock()
+
+    mock_groq_cls.return_value = _mock_groq_client(empty_content)
+
+    mock_http = _mock_cerebras_client("Cerebras fallback.")
+    mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_http)
+    mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    result = await generate("ctx", "q")
+    assert result == "Cerebras fallback."
+    mock_breaker.record_failure.assert_called_once()
+    mock_breaker.record_success.assert_not_called()
+
+
+@patch("app.services.llm_client.settings")
+@patch("app.services.llm_client._cerebras_breaker")
+@patch("app.services.llm_client.httpx.AsyncClient")
+@patch("app.services.llm_client.AsyncGroq")
+@patch("app.services.llm_client._groq_breaker")
+async def test_groq_stream_no_content_falls_back_to_cerebras(
+    mock_groq_breaker, mock_groq_cls, mock_client_cls, mock_cerebras_cb, mock_settings
+):
+    """A Groq stream that yields only empty deltas falls back to Cerebras with no
+    STREAM_RESET (nothing usable was yielded, so the failover is seamless)."""
+    from app.config import LLMProvider
+
+    mock_settings.llm_provider = LLMProvider.groq
+    mock_settings.groq_api_key = "fake-key"
+    mock_settings.cerebras_api_key = "fake-cerebras-key"
+    mock_groq_breaker.allow_request = AsyncMock(return_value=True)
+    mock_groq_breaker.record_failure = AsyncMock()
+    mock_groq_breaker.record_success = AsyncMock()
+    mock_cerebras_cb.allow_request = AsyncMock(return_value=True)
+    mock_cerebras_cb.record_success = AsyncMock()
+    mock_cerebras_cb.record_failure = AsyncMock()
+
+    mock_groq_cls.return_value.chat.completions.create = AsyncMock(
+        return_value=_make_groq_stream_chunks(None, "", None)
+    )
+
+    mock_http = _mock_cerebras_client("Cerebras fallback.")
+    mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_http)
+    mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+    tokens = []
+    async for t in generate_stream("ctx", "q"):
+        tokens.append(t)
+
+    assert tokens == ["Cerebras fallback."]
+    assert STREAM_RESET not in tokens
+    mock_groq_breaker.record_failure.assert_called_once()
+    mock_groq_breaker.record_success.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # Circuit breaker open → skip Groq entirely
 # ---------------------------------------------------------------------------
 

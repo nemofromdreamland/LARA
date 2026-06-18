@@ -19,6 +19,10 @@ class ServiceUnavailableError(Exception):
     """Raised when all LLM providers have open circuit breakers."""
 
 
+class _GroqEmptyResponseError(Exception):
+    """Groq returned empty/blank content — treat as transient to trigger fallback."""
+
+
 # Sentinel yielded by generate_stream when partial tokens must be discarded:
 # Groq died mid-stream and the fallback provider regenerates from scratch, so
 # the consumer must drop everything received before this marker. Follows the
@@ -133,6 +137,7 @@ _GROQ_TRANSIENT = (
     groq_sdk.RateLimitError,
     groq_sdk.InternalServerError,
     groq_sdk.APIConnectionError,
+    _GroqEmptyResponseError,
 )
 
 
@@ -271,7 +276,10 @@ async def _call_groq(
         messages=_build_messages(system_prompt, history or [], prompt),
         temperature=temperature,
     )
-    return response.choices[0].message.content
+    content = response.choices[0].message.content
+    if not content or not content.strip():
+        raise _GroqEmptyResponseError("Groq returned empty content")
+    return content
 
 
 async def _stream_groq(
@@ -287,10 +295,16 @@ async def _stream_groq(
         temperature=0.0,
         stream=True,
     )
+    saw_content = False
     async for chunk in stream:
         content = chunk.choices[0].delta.content
         if content:
+            saw_content = True
             yield content
+    if not saw_content:
+        # An all-empty stream is a filtered/degenerate completion; raise so the
+        # caller falls back to Cerebras (no tokens yielded → seamless failover).
+        raise _GroqEmptyResponseError("Groq stream produced no content")
 
 
 def _is_cerebras_transient(exc: BaseException) -> bool:
