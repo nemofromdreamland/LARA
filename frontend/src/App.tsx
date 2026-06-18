@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { SessionExpiredError, createSession, streamQuestion, uploadPrescription } from './api'
+import { SessionExpiredError, checkInteractions, createSession, listSamples, loadSample, streamQuestion, uploadPrescription } from './api'
+import type { InteractionsResult, SampleInfo } from './api'
 import ChatPanel from './components/ChatPanel'
+import InteractionsPanel from './components/InteractionsPanel'
 import Mascot from './components/Mascot'
+import SamplePicker from './components/SamplePicker'
 import UploadZone from './components/UploadZone'
+import { drugColorClass } from './utils/drugColors'
 
 export type Phase = 'idle' | 'uploading' | 'ready' | 'asking'
 
@@ -44,6 +48,10 @@ export default function App() {
   const [drugs, setDrugs] = useState<string[]>([])
   const [messages, setMessages] = useState<Message[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [samples, setSamples] = useState<SampleInfo[]>([])
+  const [loadingSampleId, setLoadingSampleId] = useState<string | null>(null)
+  const [interactions, setInteractions] = useState<InteractionsResult | null>(null)
+  const [interactionsLoading, setInteractionsLoading] = useState(false)
   const [mascotHappy, setMascotHappy] = useState(false)
   const [mascotError, setMascotError] = useState(false)
   const [dark, setDark] = useState(() => {
@@ -76,6 +84,13 @@ export default function App() {
     createSession()
       .then((id) => { setSessionId(id); setSessionReady(true) })
       .catch(() => setError('Unable to reach the server. Try refreshing the page.'))
+  }, [])
+
+  // Sample list is decorative on failure — hide the section rather than error
+  useEffect(() => {
+    listSamples()
+      .then(setSamples)
+      .catch(() => setSamples([]))
   }, [])
 
   useEffect(() => {
@@ -111,6 +126,8 @@ export default function App() {
     setPhase('idle')
     setDrugs([])
     setMessages([])
+    setInteractions(null)
+    setInteractionsLoading(false)
     setError(null)
     setSessionReady(false)
     createSession()
@@ -118,15 +135,16 @@ export default function App() {
       .catch(() => setError('Unable to reach the server. Try refreshing the page.'))
   }, [messages])
 
-  const handleUpload = useCallback(async (file: File) => {
-    if (!sessionId) return
+  const startIngestion = useCallback(async (
+    begin: (signal: AbortSignal) => Promise<{ drugs_found: string[]; missing_leaflets: string[]; status: string }>,
+  ) => {
     abortControllerRef.current?.abort()
     const controller = new AbortController()
     abortControllerRef.current = controller
     setPhase('uploading')
     setError(null)
     try {
-      const result = await uploadPrescription(sessionId, file, controller.signal)
+      const result = await begin(controller.signal)
       setDrugs(result.drugs_found)
       setPhase('ready')
       triggerHappy()
@@ -149,7 +167,38 @@ export default function App() {
       setPhase('idle')
       triggerMascotError()
     }
-  }, [sessionId, triggerHappy, triggerMascotError, handleReset])
+  }, [triggerHappy, triggerMascotError, handleReset])
+
+  const handleCheckInteractions = useCallback(async () => {
+    if (!sessionId || interactionsLoading) return
+    setInteractionsLoading(true)
+    setInteractions(null)
+    try {
+      const result = await checkInteractions(sessionId)
+      setInteractions(result)
+    } catch (e: unknown) {
+      if (e instanceof SessionExpiredError) { handleReset(); return }
+      setError(e instanceof Error ? e.message : 'Interaction check failed.')
+      triggerMascotError()
+    } finally {
+      setInteractionsLoading(false)
+    }
+  }, [sessionId, interactionsLoading, handleReset, triggerMascotError])
+
+  const handleUpload = useCallback(async (file: File) => {
+    if (!sessionId) return
+    await startIngestion((signal) => uploadPrescription(sessionId, file, signal))
+  }, [sessionId, startIngestion])
+
+  const handleSampleSelect = useCallback(async (sampleId: string) => {
+    if (!sessionId) return
+    setLoadingSampleId(sampleId)
+    try {
+      await startIngestion((signal) => loadSample(sessionId, sampleId, signal))
+    } finally {
+      setLoadingSampleId(null)
+    }
+  }, [sessionId, startIngestion])
 
   const handleQuestion = useCallback(async (question: string) => {
     if (!sessionId || phase === 'asking') return
@@ -214,7 +263,7 @@ export default function App() {
       triggerMascotError()
       setPhase('ready')
     }
-  }, [sessionId, phase, messages, triggerHappy, triggerMascotError, handleReset])
+  }, [sessionId, phase, triggerHappy, triggerMascotError, handleReset])
 
   const mascotState = mascotError
     ? 'error'
@@ -225,6 +274,11 @@ export default function App() {
         : phase === 'asking'
           ? 'thinking'
           : 'idle'
+
+  const lastMsg = messages[messages.length - 1]
+  const isThinking = phase === 'asking' && (
+    messages.length === 0 || lastMsg.role === 'user' || lastMsg.content === ''
+  )
 
   const inChat = phase === 'ready' || phase === 'asking'
 
@@ -251,19 +305,39 @@ export default function App() {
         <div className="flex items-center gap-3">
           {inChat && (
             <>
-              <div className="flex gap-1.5 flex-wrap min-w-0 overflow-hidden">
+              <div className="flex gap-1.5 flex-wrap flex-1 min-w-0 overflow-x-auto">
                 {drugs.map((d) => (
                   <span
                     key={d}
-                    className="text-xs font-medium bg-primary-container dark:bg-primary-container-d text-primary-dark dark:text-primary-text-d px-2.5 py-1 rounded-full capitalize"
+                    className={`text-xs font-medium px-2.5 py-1 rounded-full capitalize flex-shrink-0 ${drugColorClass(d, drugs)}`}
                   >
                     {d}
                   </span>
                 ))}
               </div>
+              {drugs.length > 1 && (
+                <button
+                  onClick={handleCheckInteractions}
+                  disabled={interactionsLoading || phase === 'asking'}
+                  className="text-xs font-medium text-secondary dark:text-secondary-d hover:text-navy dark:hover:text-navy-d transition-colors px-3 py-2.5 min-h-[44px] flex items-center gap-1.5 rounded-full hover:bg-surface-low dark:hover:bg-surface-low-d flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {interactionsLoading ? (
+                    <svg className="animate-spin w-3.5 h-3.5" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                    </svg>
+                  ) : (
+                    <svg viewBox="0 0 24 24" width={14} height={14} fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="8" cy="12" r="3" /><circle cx="16" cy="12" r="3" />
+                      <path d="M11 12h2" /><path d="M5 12H3m18 0h-2" />
+                    </svg>
+                  )}
+                  Check interactions
+                </button>
+              )}
               <button
                 onClick={handleReset}
-                className="text-xs font-medium text-secondary dark:text-secondary-d hover:text-navy dark:hover:text-navy-d transition-colors px-3 py-2.5 min-h-[44px] flex items-center rounded-full hover:bg-surface-low dark:hover:bg-surface-low-d"
+                className="text-xs font-medium text-secondary dark:text-secondary-d hover:text-navy dark:hover:text-navy-d transition-colors px-3 py-2.5 min-h-[44px] flex items-center rounded-full hover:bg-surface-low dark:hover:bg-surface-low-d flex-shrink-0"
               >
                 New prescription
               </button>
@@ -320,6 +394,12 @@ export default function App() {
             {/* Upload card */}
             <div className="bg-surface-lowest dark:bg-surface-lowest-d rounded-5xl shadow-ambient flex flex-col justify-center min-h-[320px]">
               <UploadZone onUpload={handleUpload} loading={phase === 'uploading'} sessionReady={sessionReady} />
+              <SamplePicker
+                samples={samples}
+                onSelect={handleSampleSelect}
+                loadingId={loadingSampleId}
+                disabled={phase === 'uploading' || !sessionReady}
+              />
             </div>
           </div>
         ) : (
@@ -344,12 +424,21 @@ export default function App() {
               </div>
             </div>
 
-            {/* Chat messages + input */}
-            <div className="flex-1 flex flex-col overflow-hidden">
+            {/* Right column: optional interactions panel + chat */}
+            <div className="flex-1 flex flex-col overflow-hidden gap-2">
+              {interactions && (
+                <InteractionsPanel
+                  result={interactions}
+                  drugs={drugs}
+                  onDismiss={() => setInteractions(null)}
+                />
+              )}
               <ChatPanel
                 messages={messages}
                 onSend={handleQuestion}
                 disabled={phase === 'asking'}
+                isThinking={isThinking}
+                drugs={drugs}
                 textareaRef={chatInputRef}
               />
             </div>

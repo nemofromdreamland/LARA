@@ -10,7 +10,13 @@ from prometheus_client import Counter
 from app.config import settings
 from app.models.schemas import ChatResponse, PrescriptionEntry, Source
 from app.services.embedder import embed
-from app.services.llm_client import generate, generate_stream, strip_cited_line
+from app.services.llm_client import (
+    STREAM_RESET,
+    SYSTEM_PROMPT,
+    generate,
+    generate_stream,
+    strip_cited_line,
+)
 from app.services.reranker import rerank
 from app.services.session_store import get_prescription_entries, get_upload_result
 from app.services.vector_store import retrieve
@@ -20,6 +26,9 @@ logger = logging.getLogger(__name__)
 
 # cl100k_base is the LLaMA-family proxy encoding; avoids a sentencepiece dependency
 _enc = tiktoken.get_encoding("cl100k_base")
+
+# Fixed system-prompt cost, counted against the context budget once per request.
+_SYSTEM_PROMPT_TOKENS = len(_enc.encode(SYSTEM_PROMPT))
 
 _RETRIEVAL_CHUNKS = Counter(
     "lara_retrieval_chunks_total",
@@ -45,7 +54,10 @@ def trim_to_budget(chunks_with_scores: list, max_tokens: int) -> list:
     kept: list = []
     total = 0
     for chunk in sorted_chunks:
-        chunk_len = len(_enc.encode(chunk["text"]))
+        # Count the "[drug — section]\n" header the context assembler prepends to
+        # each chunk, not just the chunk text, so the budget reflects the real prompt.
+        header = f"[{chunk['drug_name']} — {chunk['section']}]\n"
+        chunk_len = len(_enc.encode(header + chunk["text"]))
         if total + chunk_len <= max_tokens:
             kept.append(chunk)
             total += chunk_len
@@ -66,6 +78,14 @@ def trim_to_budget(chunks_with_scores: list, max_tokens: int) -> list:
             extra={"request_id": rid},
         )
     return kept
+
+
+def _history_token_cost(history: list[dict] | None) -> int:
+    """Token cost of the conversation history sent alongside the context."""
+    if not history:
+        return 0
+    text = "\n".join(h.get("content", "") for h in history)
+    return len(_enc.encode(text))
 
 
 def _format_prescription(entries: list[PrescriptionEntry]) -> str:
@@ -145,7 +165,7 @@ async def _retrieve_diverse(
     Guarantees at least one chunk per drug when multiple drugs are in the session,
     preventing a single drug from monopolising all top-k slots.
     """
-    per_drug_k = max(2, math.ceil(settings.retrieval_top_k / len(drugs)))
+    per_drug_k = max(4, math.ceil(settings.retrieval_top_k / len(drugs)))
     per_drug_results = await asyncio.gather(
         *[
             retrieve(query_embedding, session_id, top_k=per_drug_k, drug_name=drug)
@@ -224,8 +244,18 @@ async def _prepare_context(
     if prescription_text:
         context_parts.append(prescription_text)
 
-    remaining_budget = settings.max_context_tokens - len(_enc.encode(prescription_text))
+    # Reserve budget for the system prompt and (capped) history so retrieved
+    # chunks plus those fixed costs stay within the model's context window.
+    history_tokens = min(_history_token_cost(history), settings.max_history_tokens)
+    remaining_budget = (
+        settings.max_context_tokens
+        - len(_enc.encode(prescription_text))
+        - _SYSTEM_PROMPT_TOKENS
+        - history_tokens
+    )
     chunks = trim_to_budget(chunks, max_tokens=max(0, remaining_budget))
+    if not chunks:
+        return None
 
     context_parts.extend(
         f"[{c['drug_name']} — {c['section']}]\n{c['text']}" for c in chunks
@@ -292,12 +322,20 @@ async def answer_stream(
 
     chunks, context = prepared
 
+    # Accumulate tokens so the streamed answer's citations drive source filtering,
+    # exactly as answer() does — keeping /chat and /chat/stream sources in sync.
+    accumulated: list[str] = []
     async for token in generate_stream(context, question, history=history):
+        if token == STREAM_RESET:
+            # Mid-stream failover regenerates from scratch; discard partial tokens
+            # so only the final answer's CITED line is parsed.
+            accumulated.clear()
+        else:
+            accumulated.append(token)
         yield token
 
-    sources = [
-        {"drug_name": s.drug_name, "section": s.section}
-        for s in _deduplicate_sources(chunks)
-    ]
+    _, cited = strip_cited_line("".join(accumulated))
+    filtered = _filter_sources_by_cited(_deduplicate_sources(chunks), cited)
+    sources = [{"drug_name": s.drug_name, "section": s.section} for s in filtered]
     yield "[SOURCES]" + json.dumps({"sources": sources})
     yield "[DONE]"

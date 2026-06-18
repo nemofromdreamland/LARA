@@ -47,6 +47,7 @@ def pdf_with_drug() -> bytes:
 def session_id(client: TestClient) -> str:
     resp = client.post("/session")
     assert resp.status_code == 200
+    client.headers["X-Session-Token"] = resp.json()["session_token"]
     return resp.json()["session_id"]
 
 
@@ -55,10 +56,10 @@ def session_id(client: TestClient) -> str:
 # ---------------------------------------------------------------------------
 
 
-@patch("app.routes.upload.parse_prescription", new_callable=AsyncMock)
+@patch("app.services.ingestion.parse_prescription", new_callable=AsyncMock)
 @patch("app.services.ingestion.fetch_leaflet_sections", new_callable=AsyncMock)
-@patch("app.routes.upload.embed", new_callable=AsyncMock)
-@patch("app.routes.upload.store", new_callable=AsyncMock)
+@patch("app.services.ingestion.embed", new_callable=AsyncMock)
+@patch("app.services.ingestion.store", new_callable=AsyncMock)
 def test_upload_success(
     mock_store, mock_embed, mock_fetch, mock_parse, client, session_id, pdf_with_drug
 ):
@@ -79,10 +80,10 @@ def test_upload_success(
     assert data["status"] == "processing"
 
 
-@patch("app.routes.upload.parse_prescription", new_callable=AsyncMock)
+@patch("app.services.ingestion.parse_prescription", new_callable=AsyncMock)
 @patch("app.services.ingestion.fetch_leaflet_sections", new_callable=AsyncMock)
-@patch("app.routes.upload.embed", new_callable=AsyncMock)
-@patch("app.routes.upload.store", new_callable=AsyncMock)
+@patch("app.services.ingestion.embed", new_callable=AsyncMock)
+@patch("app.services.ingestion.store", new_callable=AsyncMock)
 def test_upload_unknown_drug_job_accepted(
     mock_store, mock_embed, mock_fetch, mock_parse, client, session_id
 ):
@@ -128,7 +129,7 @@ def test_upload_empty_pdf_returns_422(client, session_id):
     assert response.status_code == 422
 
 
-@patch("app.routes.upload.parse_prescription", new_callable=AsyncMock)
+@patch("app.services.ingestion.parse_prescription", new_callable=AsyncMock)
 def test_upload_pdf_no_drugs_job_accepted(mock_parse, client, session_id):
     """No drugs found is reported asynchronously via job status, not as 422."""
     mock_parse.return_value = []
@@ -166,10 +167,10 @@ def _job_status(client, job_id: str, session_id: str) -> dict:
     return resp.json()
 
 
-@patch("app.routes.upload.parse_prescription", new_callable=AsyncMock)
+@patch("app.services.ingestion.parse_prescription", new_callable=AsyncMock)
 @patch("app.services.ingestion.fetch_leaflet_sections", new_callable=AsyncMock)
-@patch("app.routes.upload.embed", new_callable=AsyncMock)
-@patch("app.routes.upload.store", new_callable=AsyncMock)
+@patch("app.services.ingestion.embed", new_callable=AsyncMock)
+@patch("app.services.ingestion.store", new_callable=AsyncMock)
 def test_upload_success_job_reaches_done_with_drugs_found(
     mock_store, mock_embed, mock_fetch, mock_parse, client, session_id, pdf_with_drug
 ):
@@ -193,10 +194,10 @@ def test_upload_success_job_reaches_done_with_drugs_found(
     mock_store.assert_awaited_once()
 
 
-@patch("app.routes.upload.parse_prescription", new_callable=AsyncMock)
-@patch("app.routes.upload.process_drug", new_callable=AsyncMock)
-@patch("app.routes.upload.embed", new_callable=AsyncMock)
-@patch("app.routes.upload.store", new_callable=AsyncMock)
+@patch("app.services.ingestion.parse_prescription", new_callable=AsyncMock)
+@patch("app.services.ingestion.process_drug", new_callable=AsyncMock)
+@patch("app.services.ingestion.embed", new_callable=AsyncMock)
+@patch("app.services.ingestion.store", new_callable=AsyncMock)
 def test_upload_per_drug_failure_job_done_with_missing_leaflet(
     mock_store, mock_embed, mock_process, mock_parse, client, session_id, pdf_with_drug
 ):
@@ -230,7 +231,7 @@ def test_upload_per_drug_failure_job_done_with_missing_leaflet(
     assert data["error"] is None
 
 
-@patch("app.routes.upload.parse_prescription", new_callable=AsyncMock)
+@patch("app.services.ingestion.parse_prescription", new_callable=AsyncMock)
 @patch("app.services.ingestion.fetch_leaflet_sections", new_callable=AsyncMock)
 def test_upload_unknown_drug_job_done_with_missing_leaflet(
     mock_fetch, mock_parse, client, session_id, pdf_with_drug
@@ -253,13 +254,14 @@ def test_upload_unknown_drug_job_done_with_missing_leaflet(
     assert data["missing_leaflets"] == ["lisinopril"]
 
 
-@patch("app.routes.upload.parse_prescription", new_callable=AsyncMock)
+@patch("app.services.ingestion.parse_prescription", new_callable=AsyncMock)
 @patch("app.services.ingestion.fetch_leaflet_sections", new_callable=AsyncMock)
-@patch("app.routes.upload.embed", new_callable=AsyncMock)
-def test_upload_embed_failure_job_fails_with_error(
+@patch("app.services.ingestion.embed", new_callable=AsyncMock)
+def test_upload_embed_failure_drug_lands_in_missing_leaflets(
     mock_embed, mock_fetch, mock_parse, client, session_id, pdf_with_drug
 ):
-    """An exception outside the per-drug gather (embedding) fails the job."""
+    """An embed failure for a drug is isolated: the job ends 'done' with that
+    drug in missing_leaflets rather than crashing the entire ingestion job."""
     mock_parse.return_value = MOCK_ENTRIES
     mock_fetch.return_value = MOCK_SECTIONS
     mock_embed.side_effect = RuntimeError("embedding pool exploded")
@@ -272,12 +274,12 @@ def test_upload_embed_failure_job_fails_with_error(
     assert response.status_code == 202
 
     data = _job_status(client, response.json()["job_id"], session_id)
-    assert data["status"] == "failed"
-    assert "embedding pool exploded" in data["error"]
+    assert data["status"] == "done"
     assert data["drugs_found"] == []
+    assert len(data["missing_leaflets"]) > 0
 
 
-@patch("app.routes.upload.parse_prescription", new_callable=AsyncMock)
+@patch("app.services.ingestion.parse_prescription", new_callable=AsyncMock)
 def test_upload_no_drugs_job_fails_with_message(
     mock_parse, client, session_id, pdf_with_drug
 ):

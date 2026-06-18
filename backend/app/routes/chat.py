@@ -1,7 +1,7 @@
 import json
 from collections.abc import AsyncGenerator
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 
 from app.config import settings
@@ -9,7 +9,7 @@ from app.dependencies import require_api_key, verify_session_owner
 from app.limiter import limiter
 from app.models.schemas import ChatRequest, ChatResponse
 from app.services import session_store
-from app.services.llm_client import STREAM_RESET
+from app.services.llm_client import STREAM_RESET, strip_cited_line
 from app.services.rag_pipeline import answer, answer_stream
 
 router = APIRouter()
@@ -20,9 +20,10 @@ router = APIRouter()
 async def chat(
     request: Request,
     body: ChatRequest,
-    caller_hash: str = Depends(require_api_key),
+    _api_key: str = Depends(require_api_key),
+    x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
 ) -> ChatResponse:
-    await verify_session_owner(body.session_id, caller_hash)
+    await verify_session_owner(body.session_id, x_session_token)
     embed_executor = getattr(request.app.state, "embed_executor", None)
     history = [h.model_dump() for h in await session_store.get_history(body.session_id)]
     result = await answer(body.session_id, body.question, history, embed_executor)
@@ -36,7 +37,8 @@ async def chat(
 async def chat_stream(
     request: Request,
     body: ChatRequest,
-    caller_hash: str = Depends(require_api_key),
+    _api_key: str = Depends(require_api_key),
+    x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
 ) -> StreamingResponse:
     """Stream the RAG answer as Server-Sent Events.
 
@@ -48,7 +50,7 @@ async def chat_stream(
       event: done    — end-of-stream sentinel
     """
 
-    await verify_session_owner(body.session_id, caller_hash)
+    await verify_session_owner(body.session_id, x_session_token)
     embed_executor = getattr(request.app.state, "embed_executor", None)
     # Fetched before the StreamingResponse is constructed so a Redis outage
     # surfaces as a proper 503 instead of a 200 with a broken stream.
@@ -64,8 +66,9 @@ async def chat_stream(
                 await session_store.append_history(
                     body.session_id, "user", body.question
                 )
+                clean_answer, _ = strip_cited_line("".join(assistant_tokens))
                 await session_store.append_history(
-                    body.session_id, "assistant", "".join(assistant_tokens)
+                    body.session_id, "assistant", clean_answer
                 )
             elif payload == STREAM_RESET:
                 # Mid-stream failover: the partial tokens are superseded by the

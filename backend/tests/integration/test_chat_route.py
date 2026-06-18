@@ -28,6 +28,9 @@ EMPTY_ANSWER = ChatResponse(
 def session_id(client: TestClient) -> str:
     resp = client.post("/session")
     assert resp.status_code == 200
+    # Carry the issued per-session token on every subsequent request from this
+    # client so verify_session_owner sees the matching owner.
+    client.headers["X-Session-Token"] = resp.json()["session_token"]
     return resp.json()["session_id"]
 
 
@@ -82,6 +85,39 @@ def test_chat_missing_fields_returns_422(client: TestClient):
     # Missing 'question' — Pydantic validation fires before session check
     response = client.post("/chat", json={"session_id": "a" * 36})
     assert response.status_code == 422
+
+
+@patch("app.routes.chat.answer", new_callable=AsyncMock)
+def test_chat_isolated_across_sessions(mock_answer, client: TestClient):
+    """Two sessions share the API key but not the token.
+
+    Session A's data must be unreachable with session B's token (403), and
+    reachable with A's own token (200) — proving per-session isolation holds.
+    """
+    mock_answer.return_value = MOCK_ANSWER
+
+    a = client.post("/session").json()
+    b = client.post("/session").json()
+    assert a["session_id"] != b["session_id"]
+    assert a["session_token"] != b["session_token"]
+
+    body = {"session_id": a["session_id"], "question": "What is the dosage?"}
+
+    # B's token against A's session → 403.
+    wrong = client.post(
+        "/chat", json=body, headers={"X-Session-Token": b["session_token"]}
+    )
+    assert wrong.status_code == 403
+
+    # No token at all → 403 (the shared API key alone is not enough).
+    missing = client.post("/chat", json=body)
+    assert missing.status_code == 403
+
+    # A's own token → 200.
+    ok = client.post(
+        "/chat", json=body, headers={"X-Session-Token": a["session_token"]}
+    )
+    assert ok.status_code == 200
 
 
 # rerank() is intentionally NOT patched here, so the real cross-encoder runs

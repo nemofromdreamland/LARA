@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import uuid
 
@@ -8,6 +7,7 @@ from fastapi import (
     Depends,
     File,
     Form,
+    Header,
     HTTPException,
     Query,
     Request,
@@ -18,101 +18,14 @@ from app.config import settings
 from app.dependencies import require_api_key, verify_session_owner
 from app.limiter import limiter
 from app.models.schemas import JobStatusResponse, UploadJobResponse
-from app.services.embedder import embed
-from app.services.ingestion import process_drug
+from app.services.ingestion import run_ingestion
 from app.services.pdf_parser import PDFExtractionError, extract_text
-from app.services.prescription_parser import parse_prescription
-from app.services.session_store import (
-    get_job_status,
-    save_job_status,
-    save_prescription,
-    save_prescription_entries,
-    save_upload_result,
-)
-from app.services.vector_store import store
+from app.services.session_store import get_job_status, save_job_status
 from app.utils import get_request_id, run_sync
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-async def _run_ingestion(
-    job_id: str,
-    session_id: str,
-    text: str,
-    rid: str,
-    embed_executor,
-) -> None:
-    """Background task: parse prescription → fetch leaflets → embed → store."""
-    try:
-        entries = await parse_prescription(text, session_id=session_id)
-        if not entries:
-            await save_job_status(
-                job_id,
-                session_id,
-                "failed",
-                error="No drug names found in prescription.",
-            )
-            return
-
-        await save_prescription(session_id, text)
-        await save_prescription_entries(session_id, entries)
-
-        drug_names = [e.drug_name for e in entries]
-
-        results = await asyncio.gather(
-            *[process_drug(drug) for drug in drug_names],
-            return_exceptions=True,
-        )
-
-        stored_drugs: list[str] = []
-        missing_drugs: list[str] = []
-
-        for drug, result in zip(drug_names, results):
-            if isinstance(result, Exception):
-                logger.warning(
-                    "DailyMed fetch failed for %s: %s",
-                    drug,
-                    result,
-                    extra={"request_id": rid},
-                )
-                missing_drugs.append(drug)
-                continue
-            _, chunks, metas = result
-            if not chunks:
-                logger.warning(
-                    "No DailyMed leaflet found for drug: %s",
-                    drug,
-                    extra={"request_id": rid},
-                )
-                missing_drugs.append(drug)
-                continue
-            embeddings = await embed(chunks, embed_executor)
-            await store(chunks, embeddings, metas, session_id=session_id)
-            stored_drugs.append(drug)
-
-        await save_upload_result(session_id, stored_drugs, missing_drugs)
-        await save_job_status(
-            job_id,
-            session_id,
-            "done",
-            drugs_found=stored_drugs,
-            missing_leaflets=missing_drugs,
-        )
-
-        logger.info(
-            "ingestion done: %d stored, %d missing",
-            len(stored_drugs),
-            len(missing_drugs),
-            extra={"request_id": rid},
-        )
-
-    except Exception as exc:
-        logger.exception(
-            "ingestion failed for job %s: %s", job_id, exc, extra={"request_id": rid}
-        )
-        await save_job_status(job_id, session_id, "failed", error=str(exc))
 
 
 @router.post("/upload", response_model=UploadJobResponse, status_code=202)
@@ -122,9 +35,10 @@ async def upload(
     background_tasks: BackgroundTasks,
     session_id: str = Form(...),
     file: UploadFile = File(...),
-    caller_hash: str = Depends(require_api_key),
+    _api_key: str = Depends(require_api_key),
+    x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
 ) -> UploadJobResponse:
-    await verify_session_owner(session_id, caller_hash)
+    await verify_session_owner(session_id, x_session_token)
     rid = get_request_id()
 
     if file.content_type != "application/pdf":
@@ -153,7 +67,7 @@ async def upload(
 
     embed_executor = getattr(request.app.state, "embed_executor", None)
     background_tasks.add_task(
-        _run_ingestion, job_id, session_id, text, rid, embed_executor
+        run_ingestion, job_id, session_id, text, rid, embed_executor
     )
 
     logger.info(
@@ -170,9 +84,10 @@ async def upload(
 async def upload_status(
     job_id: str,
     session_id: str = Query(...),
-    caller_hash: str = Depends(require_api_key),
+    _api_key: str = Depends(require_api_key),
+    x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
 ) -> JobStatusResponse:
-    await verify_session_owner(session_id, caller_hash)
+    await verify_session_owner(session_id, x_session_token)
     data = await get_job_status(job_id)
     if data is None:
         raise HTTPException(status_code=404, detail="Job not found.")

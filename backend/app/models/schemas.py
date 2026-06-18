@@ -15,6 +15,10 @@ class PrescriptionEntry(BaseModel):
 
 class SessionResponse(BaseModel):
     session_id: str
+    # Per-session secret returned exactly once at creation. The frontend stores
+    # it and sends it as X-Session-Token to prove ownership of this session;
+    # only its sha256 is persisted server-side (see save_session_owner).
+    session_token: str
 
 
 class ComponentHealth(BaseModel):
@@ -40,6 +44,21 @@ class JobStatusResponse(BaseModel):
     drugs_found: list[str] = []
     missing_leaflets: list[str] = []
     error: str | None = None
+
+
+class SampleInfo(BaseModel):
+    id: str
+    label: str
+    description: str
+    drugs: list[str]
+
+
+class SampleListResponse(BaseModel):
+    samples: list[SampleInfo]
+
+
+class SampleLoadRequest(BaseModel):
+    session_id: str = Field(min_length=36, max_length=36)
 
 
 class Source(BaseModel):

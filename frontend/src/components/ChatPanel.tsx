@@ -6,17 +6,30 @@ interface ChatPanelProps {
   messages: Message[]
   onSend: (question: string) => void
   disabled: boolean
+  isThinking: boolean
+  drugs: string[]
   textareaRef?: RefObject<HTMLTextAreaElement>
 }
 
-const SUGGESTIONS = [
-  'What are the side effects?',
-  'Are there any drug interactions?',
-  'What is the recommended dosage?',
-  'What warnings should I know about?',
-]
+function buildSuggestions(drugs: string[]): string[] {
+  if (drugs.length === 0) {
+    return ['What are the side effects?', 'What is the recommended dosage?', 'What warnings should I know about?', 'Are there any drug interactions?']
+  }
+  const [d0, d1] = drugs
+  const suggestions = [
+    `What are the side effects of ${d0}?`,
+    `What is the dosage for ${d0}?`,
+  ]
+  if (d1) {
+    suggestions.push(`Are there interactions between ${d0} and ${d1}?`)
+  } else {
+    suggestions.push('What warnings should I know about?')
+  }
+  suggestions.push(`What should I avoid while taking ${d0}?`)
+  return suggestions.slice(0, 4)
+}
 
-export default function ChatPanel({ messages, onSend, disabled, textareaRef }: ChatPanelProps) {
+export default function ChatPanel({ messages, onSend, disabled, isThinking, drugs, textareaRef }: ChatPanelProps) {
   const [input, setInput] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -73,11 +86,11 @@ export default function ChatPanel({ messages, onSend, disabled, textareaRef }: C
       {/* Messages */}
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto py-4 px-2 flex flex-col gap-4" aria-live="polite" aria-atomic="false" aria-relevant="additions">
         {messages.map((m) => (
-          <MessageBubble key={m.id} message={m} />
+          <MessageBubble key={m.id} message={m} drugs={drugs} />
         ))}
 
-        {/* Thinking indicator — shown as a LARA bubble while disabled */}
-        {disabled && (
+        {/* Thinking indicator — hidden once the first token arrives */}
+        {isThinking && (
           <div className="flex items-start gap-2 fade-up" aria-label="LARA is thinking">
             <div className="w-2 flex-shrink-0" />
             <div className="bg-surface-lowest dark:bg-surface-lowest-d rounded-4xl rounded-tl-lg shadow-ambient px-5 py-4">
@@ -96,7 +109,7 @@ export default function ChatPanel({ messages, onSend, disabled, textareaRef }: C
       {/* Suggestion chips — shown only after the first LARA welcome message */}
       {messages.length === 1 && messages[0].role === 'lara' && !input && !disabled && (
         <div className="px-2 pb-2 flex gap-2 flex-wrap">
-          {SUGGESTIONS.map((s) => (
+          {buildSuggestions(drugs).map((s) => (
             <button
               key={s}
               onClick={() => useSuggestion(s)}
