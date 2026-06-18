@@ -21,6 +21,7 @@ from app.services.session_store import get_history
 def session_id(client: TestClient) -> str:
     resp = client.post("/session")
     assert resp.status_code == 200
+    client.headers["X-Session-Token"] = resp.json()["session_token"]
     return resp.json()["session_id"]
 
 

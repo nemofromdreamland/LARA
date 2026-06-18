@@ -10,6 +10,7 @@ from app.models.schemas import InteractionFlag
 def session_id(client: TestClient) -> str:
     resp = client.post("/session")
     assert resp.status_code == 200
+    client.headers["X-Session-Token"] = resp.json()["session_token"]
     return resp.json()["session_id"]
 
 

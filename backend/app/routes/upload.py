@@ -7,6 +7,7 @@ from fastapi import (
     Depends,
     File,
     Form,
+    Header,
     HTTPException,
     Query,
     Request,
@@ -34,9 +35,10 @@ async def upload(
     background_tasks: BackgroundTasks,
     session_id: str = Form(...),
     file: UploadFile = File(...),
-    caller_hash: str = Depends(require_api_key),
+    _api_key: str = Depends(require_api_key),
+    x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
 ) -> UploadJobResponse:
-    await verify_session_owner(session_id, caller_hash)
+    await verify_session_owner(session_id, x_session_token)
     rid = get_request_id()
 
     if file.content_type != "application/pdf":
@@ -82,9 +84,10 @@ async def upload(
 async def upload_status(
     job_id: str,
     session_id: str = Query(...),
-    caller_hash: str = Depends(require_api_key),
+    _api_key: str = Depends(require_api_key),
+    x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
 ) -> JobStatusResponse:
-    await verify_session_owner(session_id, caller_hash)
+    await verify_session_owner(session_id, x_session_token)
     data = await get_job_status(job_id)
     if data is None:
         raise HTTPException(status_code=404, detail="Job not found.")

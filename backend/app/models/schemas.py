@@ -15,6 +15,10 @@ class PrescriptionEntry(BaseModel):
 
 class SessionResponse(BaseModel):
     session_id: str
+    # Per-session secret returned exactly once at creation. The frontend stores
+    # it and sends it as X-Session-Token to prove ownership of this session;
+    # only its sha256 is persisted server-side (see save_session_owner).
+    session_token: str
 
 
 class ComponentHealth(BaseModel):

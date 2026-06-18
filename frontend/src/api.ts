@@ -1,6 +1,16 @@
 const BASE = '/api'
 const API_KEY = import.meta.env.VITE_API_KEY as string
 
+// Per-session secret issued once by createSession(). It proves ownership of the
+// current session (the API key is shared by every browser, so it cannot). Lives
+// in module state to match the lifetime of the React-state session id (neither
+// is persisted to localStorage). Cleared on 410 so a stale token isn't reused.
+let sessionToken: string | null = null
+
+function sessionHeaders(extra?: Record<string, string>): Record<string, string> {
+  return { 'X-API-Key': API_KEY, 'X-Session-Token': sessionToken ?? '', ...extra }
+}
+
 export class SessionExpiredError extends Error {
   constructor() {
     super('Your session has expired. Starting a new one…')
@@ -23,6 +33,7 @@ export async function createSession(): Promise<string> {
   const res = await fetch(`${BASE}/session`, { method: 'POST', headers: { 'X-API-Key': API_KEY } })
   if (!res.ok) throw new Error('Failed to create session')
   const data = await res.json()
+  sessionToken = data.session_token as string
   return data.session_id as string
 }
 
@@ -43,9 +54,9 @@ async function pollJobStatus(jobId: string, sessionId: string, maxWaitMs = 120_0
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
     const res = await fetch(
       `${BASE}/upload/status/${jobId}?session_id=${encodeURIComponent(sessionId)}`,
-      { signal, headers: { 'X-API-Key': API_KEY } },
+      { signal, headers: sessionHeaders() },
     )
-    if (res.status === 410) throw new SessionExpiredError()
+    if (res.status === 410) { sessionToken = null; throw new SessionExpiredError() }
     if (!res.ok) throw new Error('Could not check upload status.')
     const data: JobStatus = await res.json()
     if (data.status === 'done') return data
@@ -62,8 +73,8 @@ export async function uploadPrescription(
   const form = new FormData()
   form.append('session_id', sessionId)
   form.append('file', file)
-  const res = await fetch(`${BASE}/upload`, { method: 'POST', body: form, signal, headers: { 'X-API-Key': API_KEY } })
-  if (res.status === 410) throw new SessionExpiredError()
+  const res = await fetch(`${BASE}/upload`, { method: 'POST', body: form, signal, headers: sessionHeaders() })
+  if (res.status === 410) { sessionToken = null; throw new SessionExpiredError() }
   if (res.status === 429) {
     throw new Error("You're sending requests too quickly. Please wait a moment and try again.")
   }
@@ -97,11 +108,11 @@ export async function loadSample(
 ): Promise<{ drugs_found: string[]; missing_leaflets: string[]; status: string }> {
   const res = await fetch(`${BASE}/samples/${encodeURIComponent(sampleId)}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
+    headers: sessionHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ session_id: sessionId }),
     signal,
   })
-  if (res.status === 410) throw new SessionExpiredError()
+  if (res.status === 410) { sessionToken = null; throw new SessionExpiredError() }
   if (res.status === 429) {
     throw new Error("You're sending requests too quickly. Please wait a moment and try again.")
   }
@@ -127,10 +138,10 @@ export interface InteractionsResult {
 export async function checkInteractions(sessionId: string): Promise<InteractionsResult> {
   const res = await fetch(`${BASE}/interactions`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
+    headers: sessionHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ session_id: sessionId }),
   })
-  if (res.status === 410) throw new SessionExpiredError()
+  if (res.status === 410) { sessionToken = null; throw new SessionExpiredError() }
   if (!res.ok) throw new Error('Interaction check failed')
   return res.json() as Promise<InteractionsResult>
 }
@@ -142,11 +153,11 @@ export async function* streamQuestion(
 ): AsyncGenerator<StreamEvent> {
   const res = await fetch(`${BASE}/chat/stream`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
+    headers: sessionHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ session_id: sessionId, question }),
     signal,
   })
-  if (res.status === 410) throw new SessionExpiredError()
+  if (res.status === 410) { sessionToken = null; throw new SessionExpiredError() }
   if (res.status === 429) {
     throw new Error("You're sending requests too quickly. Please wait a moment and try again.")
   }

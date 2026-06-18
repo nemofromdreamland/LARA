@@ -54,6 +54,7 @@ def session_id(client: TestClient) -> str:
     """Create a real session so verify_session_owner passes."""
     resp = client.post("/session")
     assert resp.status_code == 200
+    client.headers["X-Session-Token"] = resp.json()["session_token"]
     return resp.json()["session_id"]
 
 

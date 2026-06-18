@@ -1,7 +1,7 @@
 import json
 from collections.abc import AsyncGenerator
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 
 from app.config import settings
@@ -20,9 +20,10 @@ router = APIRouter()
 async def chat(
     request: Request,
     body: ChatRequest,
-    caller_hash: str = Depends(require_api_key),
+    _api_key: str = Depends(require_api_key),
+    x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
 ) -> ChatResponse:
-    await verify_session_owner(body.session_id, caller_hash)
+    await verify_session_owner(body.session_id, x_session_token)
     embed_executor = getattr(request.app.state, "embed_executor", None)
     history = [h.model_dump() for h in await session_store.get_history(body.session_id)]
     result = await answer(body.session_id, body.question, history, embed_executor)
@@ -36,7 +37,8 @@ async def chat(
 async def chat_stream(
     request: Request,
     body: ChatRequest,
-    caller_hash: str = Depends(require_api_key),
+    _api_key: str = Depends(require_api_key),
+    x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
 ) -> StreamingResponse:
     """Stream the RAG answer as Server-Sent Events.
 
@@ -48,7 +50,7 @@ async def chat_stream(
       event: done    — end-of-stream sentinel
     """
 
-    await verify_session_owner(body.session_id, caller_hash)
+    await verify_session_owner(body.session_id, x_session_token)
     embed_executor = getattr(request.app.state, "embed_executor", None)
     # Fetched before the StreamingResponse is constructed so a Redis outage
     # surfaces as a proper 503 instead of a 200 with a broken stream.

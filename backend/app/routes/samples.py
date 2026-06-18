@@ -1,7 +1,7 @@
 import logging
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
 
 from app.config import settings
 from app.dependencies import require_api_key, verify_session_owner
@@ -41,13 +41,14 @@ async def load_sample(
     sample_id: str,
     body: SampleLoadRequest,
     background_tasks: BackgroundTasks,
-    caller_hash: str = Depends(require_api_key),
+    _api_key: str = Depends(require_api_key),
+    x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
 ) -> UploadJobResponse:
     """Start ingestion of a bundled sample prescription.
 
     Same 202 job contract as /upload; poll GET /upload/status/{job_id}.
     """
-    await verify_session_owner(body.session_id, caller_hash)
+    await verify_session_owner(body.session_id, x_session_token)
     rid = get_request_id()
 
     sample = load_manifest().get(sample_id)
