@@ -39,7 +39,7 @@ Every step is a named, independently testable function under
 3. **`store()`** — one ChromaDB collection **per session** (cosine space).
    Collection-per-session makes isolation structural (no `where session_id=`
    filter to forget) and makes session deletion a single `delete_collection`.
-4. **`retrieve()`** — top-k=8 with a distance threshold. Multi-drug sessions
+4. **`retrieve()`** — top-k=20 with a distance threshold. Multi-drug sessions
    query **per drug** so one drug's leaflet can't monopolise the context
    (`_retrieve_diverse`).
 5. **`rerank()`** — cross-encoder rescoring (shares the embed thread pool,
@@ -62,7 +62,11 @@ fails (LLM format drift), the full source list is returned rather than none.
 ## Prescription Ingestion
 
 Uploads return **202 + job id** immediately; ingestion runs as a background
-task and the frontend polls `/upload/status/{job_id}`.
+task and the frontend polls `/upload/status/{job_id}`. Bundled **sample
+prescriptions** (`GET /samples`, `POST /samples/{sample_id}`) follow the same
+202 job contract; their leaflets are seeded into the Redis DailyMed cache at
+startup so the demo never needs a live DailyMed call
+([backend/app/routes/samples.py](backend/app/routes/samples.py)).
 
 Extraction is tiered ([backend/app/services/prescription_parser.py](backend/app/services/prescription_parser.py)):
 
@@ -100,11 +104,16 @@ HALF_OPEN ──probe succeeds──► CLOSED          HALF_OPEN ──probe fa
 
 - **One static API key** (`X-API-Key`), compared timing-safely, baked into
   the frontend bundle at build time. This is *bot/scraper friction, not
-  authentication*: anyone can extract the key from the JS bundle. The next
-  step up would be a per-browser session secret issued at `/session` time.
-- **Session isolation** is structural: a UUID session id maps to its own
-  Chroma collection and Redis keys. With a single shared API key, the
-  unguessability of the UUID is the real boundary.
+  authentication*: anyone can extract the key from the JS bundle.
+- **Per-session ownership token**: `POST /session` issues a high-entropy
+  `session_token` ([backend/app/routes/session.py](backend/app/routes/session.py));
+  only its sha256 is stored server-side. Session-scoped routes require the raw
+  token as `X-Session-Token` and reject a mismatch with 403
+  ([backend/app/dependencies.py](backend/app/dependencies.py)) — so a guessed or
+  leaked session id alone cannot read another caller's session.
+- **Session isolation** is also structural: a UUID session id maps to its own
+  Chroma collection and Redis keys, making isolation a property of the data
+  layout rather than a `where session_id=` filter.
 - **Rate limiting** is per-client-IP via `X-Real-IP`, which only nginx can
   set because the backend has no published port.
 - **Prompt-injection defence in depth**: quarantine (above) + drug-name
@@ -137,7 +146,10 @@ HALF_OPEN ──probe succeeds──► CLOSED          HALF_OPEN ──probe fa
   A's official Drug Interactions section. It misses brand-name synonyms and
   drug-*class* warnings, and absence of a flag is not evidence of safety
   ([backend/app/services/interaction_detector.py](backend/app/services/interaction_detector.py)).
-- **Context budget** counts the prescription block and leaflet chunks, not
-  conversation history; very long chats could exceed the configured budget.
+- **Context budget** reserves room for the prescription block, the system
+  prompt, and conversation history (the history reservation is capped at
+  `max_history_tokens`), then fills the remainder with leaflet chunks. Because
+  that reservation is capped rather than hard-trimmed, an unusually long chat
+  can still push the assembled prompt over the configured budget.
 - **TLS** terminates nowhere in this stack — deployment behind a TLS proxy
   is assumed.
