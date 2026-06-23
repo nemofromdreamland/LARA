@@ -2,6 +2,7 @@ import fakeredis.aioredis
 import pytest
 from fastapi.testclient import TestClient
 
+import app.services.dailymed as _dm
 import app.services.llm_client as _llm
 import app.services.session_store as _ss
 import app.services.vector_store as _vs
@@ -32,10 +33,12 @@ def _reset_client_singletons():
     """
     _llm._groq_client = None
     _llm._cerebras_client = None
+    _dm._dailymed_client = None
     _vs._client = None
     yield
     _llm._groq_client = None
     _llm._cerebras_client = None
+    _dm._dailymed_client = None
     _vs._client = None
 
 

@@ -270,6 +270,27 @@ async def test_fetch_leaflet_sections_end_to_end():
 
 
 @respx.mock
+async def test_fetch_leaflet_sections_uses_pooled_singleton():
+    """When init_dailymed_client() has run, the pooled client serves the request."""
+    from app.services import dailymed
+
+    respx.get(SEARCH_URL).mock(
+        return_value=httpx.Response(200, json=MOCK_SEARCH_RESPONSE)
+    )
+    respx.get(SPL_URL).mock(return_value=httpx.Response(200, text=MOCK_SPL_XML))
+
+    await dailymed.init_dailymed_client()
+    try:
+        assert dailymed._dailymed_client is not None  # singleton branch is active
+        sections = await fetch_leaflet_sections("lisinopril")
+    finally:
+        await dailymed.close_dailymed_client()
+
+    assert len(sections) == 3
+    assert dailymed._dailymed_client is None  # closed and reset
+
+
+@respx.mock
 async def test_fetch_leaflet_sections_returns_empty_for_unknown_drug():
     respx.get(SEARCH_URL).mock(
         return_value=httpx.Response(200, json={"data": [], "metadata": {}})

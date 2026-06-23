@@ -19,6 +19,7 @@ from app.exceptions import StorageUnavailableError
 from app.limiter import limiter
 from app.routes import chat, health, interactions, samples, session, upload
 from app.services import session_store
+from app.services.dailymed import close_dailymed_client, init_dailymed_client
 from app.services.embedder import preload_model
 from app.services.llm_client import (
     ServiceUnavailableError,
@@ -96,6 +97,7 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.exception("sample leaflet cache seeding failed (non-fatal)")
     await init_cerebras_client()
+    await init_dailymed_client()
     await run_sync(preload_model)
     await run_sync(preload_reranker)
     cleanup_task = asyncio.create_task(_cleanup_loop())
@@ -106,6 +108,7 @@ async def lifespan(app: FastAPI):
         await asyncio.gather(cleanup_task, return_exceptions=True)
         await session_store.close_redis()
         await close_cerebras_client()
+        await close_dailymed_client()
         executor.shutdown(wait=False)
         embed_executor.shutdown(wait=False)
 
