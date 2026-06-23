@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from unittest.mock import AsyncMock, patch
 
@@ -7,7 +8,14 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.models.schemas import PrescriptionEntry
+from app.services import ingestion_queue as iq
 from app.services.dailymed import LeafletSection
+
+
+def _drain() -> int:
+    """Drive the queue consumer once (ingestion is enqueued, not a BackgroundTask)."""
+    return asyncio.run(iq.read_new(None))
+
 
 SAMPLE_IDS = {
     "maria_santos_anxiety",
@@ -69,12 +77,13 @@ def test_list_samples_requires_api_key():
 # ---------------------------------------------------------------------------
 
 
+@patch("app.services.ingestion.delete_session", new_callable=AsyncMock)
 @patch("app.services.ingestion.parse_prescription", new_callable=AsyncMock)
 @patch("app.services.ingestion.fetch_leaflet_sections", new_callable=AsyncMock)
 @patch("app.services.ingestion.embed", new_callable=AsyncMock)
 @patch("app.services.ingestion.store", new_callable=AsyncMock)
 def test_load_sample_job_reaches_done_with_drugs_found(
-    mock_store, mock_embed, mock_fetch, mock_parse, client, session_id
+    mock_store, mock_embed, mock_fetch, mock_parse, mock_delete, client, session_id
 ):
     mock_parse.return_value = MOCK_ENTRIES
     mock_fetch.return_value = MOCK_SECTIONS
@@ -89,18 +98,20 @@ def test_load_sample_job_reaches_done_with_drugs_found(
     assert data["session_id"] == session_id
     assert data["status"] == "processing"
 
+    assert _drain() == 1
     status = _job_status(client, data["job_id"], session_id)
     assert status["status"] == "done"
     assert status["drugs_found"] == ["sertraline", "zolpidem"]
     assert status["error"] is None
 
 
+@patch("app.services.ingestion.delete_session", new_callable=AsyncMock)
 @patch("app.services.ingestion.parse_prescription", new_callable=AsyncMock)
 @patch("app.services.ingestion.embed", new_callable=AsyncMock)
 @patch("app.services.ingestion.store", new_callable=AsyncMock)
 @respx.mock  # no routes registered: any live DailyMed call would fail the test
 def test_load_sample_leaflets_served_from_seeded_cache(
-    mock_store, mock_embed, mock_parse, client, session_id
+    mock_store, mock_embed, mock_parse, mock_delete, client, session_id
 ):
     """The request-time cache seed lets the real fetch path complete with
     zero network calls — the core promise of the samples feature."""
@@ -116,6 +127,7 @@ def test_load_sample_leaflets_served_from_seeded_cache(
     )
     assert response.status_code == 202
 
+    assert _drain() == 1
     status = _job_status(client, response.json()["job_id"], session_id)
     assert status["status"] == "done"
     assert status["drugs_found"] == ["Sertraline 50mg", "Zolpidem 10mg"]
