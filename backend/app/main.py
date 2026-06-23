@@ -18,7 +18,7 @@ from app.dependencies import require_api_key
 from app.exceptions import StorageUnavailableError
 from app.limiter import limiter
 from app.routes import chat, health, interactions, samples, session, upload
-from app.services import session_store
+from app.services import ingestion_queue, session_store
 from app.services.embedder import preload_model
 from app.services.llm_client import (
     ServiceUnavailableError,
@@ -99,11 +99,15 @@ async def lifespan(app: FastAPI):
     await run_sync(preload_model)
     await run_sync(preload_reranker)
     cleanup_task = asyncio.create_task(_cleanup_loop())
+    consumer_task = asyncio.create_task(
+        ingestion_queue.run_consumer(embed_executor, ingestion_queue._consumer_name())
+    )
     try:
         yield
     finally:
         cleanup_task.cancel()
-        await asyncio.gather(cleanup_task, return_exceptions=True)
+        consumer_task.cancel()
+        await asyncio.gather(cleanup_task, consumer_task, return_exceptions=True)
         await session_store.close_redis()
         await close_cerebras_client()
         executor.shutdown(wait=False)
