@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     embed_pool_workers: int = Field(default=4, ge=1)
     cleanup_interval_seconds: int = Field(default=1800, ge=60)
     reranker_enabled: bool = True
+    # Durable-ingestion queue (Redis Streams). See app/services/ingestion_queue.py.
+    ingestion_stream_maxlen: int = Field(default=10_000, ge=100)
+    ingestion_max_attempts: int = Field(default=5, ge=1)
+    ingestion_reclaim_idle_seconds: int = Field(default=60, ge=5)
+    # XREADGROUP BLOCK timeout. Kept < gunicorn graceful-timeout (30 s) so a
+    # consumer wakes from a blocked read promptly on shutdown.
+    ingestion_block_ms: int = Field(default=5_000, ge=100)
 
     @model_validator(mode="after")
     def _check_api_key(self) -> "Settings":
