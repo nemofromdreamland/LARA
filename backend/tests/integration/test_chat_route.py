@@ -87,6 +87,23 @@ def test_chat_missing_fields_returns_422(client: TestClient):
     assert response.status_code == 422
 
 
+def test_chat_safety_message_intercepted_no_sources(
+    client: TestClient, session_id: str
+):
+    """A self-harm message is intercepted by the classification gate before any
+    retrieval: real answer() runs (no mocks), returns 200 with a crisis reply,
+    empty sources, and no leaflet/system-prompt content."""
+    response = client.post(
+        "/chat",
+        json={"session_id": session_id, "question": "I want to kill myself"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["sources"] == []
+    assert "emergency services" in data["answer"].lower()
+    assert "You are LARA" not in data["answer"]
+
+
 @patch("app.routes.chat.answer", new_callable=AsyncMock)
 def test_chat_isolated_across_sessions(mock_answer, client: TestClient):
     """Two sessions share the API key but not the token.

@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import math
+import re
 from collections.abc import AsyncGenerator
 
 import tiktoken
@@ -9,7 +10,9 @@ from prometheus_client import Counter
 
 from app.config import settings
 from app.models.schemas import ChatResponse, PrescriptionEntry, Source
+from app.security import sanitize_chat_input
 from app.services.embedder import embed
+from app.services.input_classifier import Route, classify_input
 from app.services.llm_client import (
     STREAM_RESET,
     SYSTEM_PROMPT,
@@ -20,7 +23,7 @@ from app.services.llm_client import (
 from app.services.reranker import rerank
 from app.services.session_store import get_prescription_entries, get_upload_result
 from app.services.vector_store import retrieve
-from app.utils import get_request_id
+from app.utils import get_request_id, whole_word_match
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +36,14 @@ _SYSTEM_PROMPT_TOKENS = len(_enc.encode(SYSTEM_PROMPT))
 _RETRIEVAL_CHUNKS = Counter(
     "lara_retrieval_chunks_total",
     "Chunks passing the distance threshold per query",
+)
+
+# Per-route classification counter (incl. the safety routes). Labelled by route
+# only — never the message content — so no PII is recorded.
+_CHAT_ROUTE = Counter(
+    "lara_chat_route_total",
+    "Chat messages by pre-retrieval classification route",
+    ["route"],
 )
 
 
@@ -88,6 +99,24 @@ def _history_token_cost(history: list[dict] | None) -> int:
     return len(_enc.encode(text))
 
 
+def _trim_history_to_budget(history: list[dict], max_tokens: int) -> list[dict]:
+    """Keep the most recent whole turns whose cumulative token cost fits max_tokens.
+
+    Drops oldest turns first; never splits a turn. Counting matches
+    _history_token_cost so the budget reservation in _prepare_context becomes
+    exact (a single most-recent turn over budget yields an empty list).
+    """
+    if not history:
+        return []
+    kept: list[dict] = []
+    for turn in reversed(history):
+        candidate = [turn, *kept]
+        if _history_token_cost(candidate) > max_tokens:
+            break
+        kept = candidate
+    return kept
+
+
 def _format_prescription(entries: list[PrescriptionEntry]) -> str:
     """Format structured prescription entries as a numbered bullet-point block."""
     lines = ["[Prescription]"]
@@ -138,20 +167,75 @@ def _deduplicate_sources(chunks: list[dict]) -> list[Source]:
 
 
 def _filter_sources_by_cited(
-    sources: list[Source], cited: list[tuple[str, str]]
+    sources: list[Source], cited: list[tuple[str, str]] | None
 ) -> list[Source]:
     """Keep only sources the LLM explicitly cited.
 
-    Falls back to all sources if cited is empty.
+    - cited is None → no/garbled CITED footer; fall back to all sources.
+    - cited == []   → the model wrote 'CITED: none'; return zero sources.
+    - otherwise     → keep the cited (drug, section) pairs, falling back to all
+      only when none of them match a retrieved source (LLM format drift).
     """
-    if not cited:
+    if cited is None:
         return sources
+    if not cited:
+        return []
     cited_set = {(drug, section) for drug, section in cited}
     filtered = [
         s for s in sources if (s.drug_name.lower(), s.section.lower()) in cited_set
     ]
     # If citation parsing produced no matches (LLM format drift), return everything.
     return filtered if filtered else sources
+
+
+# Wording that asks about the whole prescription rather than a named drug —
+# forces retrieval across every session drug regardless of which are mentioned.
+# Deliberately narrow: a bare "any"/"all" (as in "any problems taking X?") must
+# NOT trigger this — only quantifiers that clearly refer to the medications.
+_BROAD_RE = re.compile(
+    r"\bboth\b"
+    r"|\b(?:any|all|each|one|none|some|either|neither) of (?:these|those|them|the|my)\b"
+    r"|\b(?:my|these|those|the) "
+    r"(?:drugs?|meds?|medications?|medicines?|prescriptions?|pills?|leaflets?)\b",
+    re.IGNORECASE,
+)
+# Wording that asks how drugs relate to one another — needs the other drugs'
+# context, so it falls back to all session drugs unless ≥2 are named explicitly.
+_INTERACTION_RE = re.compile(
+    r"\b(interact\w*|combin\w*|together|mix|compare\w*|versus|vs)\b",
+    re.IGNORECASE,
+)
+
+
+def _resolve_drug_scope(
+    question: str, history: list[dict] | None, drugs_found: list[str]
+) -> list[str]:
+    """Which session drugs the question is about. Defaults to all.
+
+    - Broad wording ("any of these") → every drug.
+    - Interaction/comparison wording → the named drugs if ≥2, else every drug
+      (the other leaflets are needed to assess the relationship).
+    - One or more drugs named → just those.
+    - Nothing named → inherit the drug(s) named in the previous user turn
+      (follow-up like "what about pregnancy?"), else every drug.
+    """
+    mentioned = [d for d in drugs_found if whole_word_match(d, question)]
+    if _BROAD_RE.search(question):
+        return drugs_found
+    if _INTERACTION_RE.search(question):
+        return mentioned if len(mentioned) >= 2 else drugs_found
+    if mentioned:
+        return mentioned
+    # Follow-up: inherit the drug(s) named in the previous user turn.
+    last_user = next(
+        (h["content"] for h in reversed(history or []) if h.get("role") == "user"),
+        None,
+    )
+    if last_user:
+        prior = [d for d in drugs_found if whole_word_match(d, last_user)]
+        if prior:
+            return prior
+    return drugs_found
 
 
 async def _retrieve_diverse(
@@ -211,8 +295,19 @@ async def _prepare_context(
 
     drugs_found, _ = await get_upload_result(session_id)
     if len(drugs_found) > 1:
-        # Per-drug retrieval: guarantees representation from every drug in the session.
-        raw_chunks = await _retrieve_diverse(query_embedding, session_id, drugs_found)
+        # Scope retrieval to the drug(s) the question is actually about so a
+        # single-drug question doesn't pull in every other drug's leaflet.
+        scope = _resolve_drug_scope(question, history, drugs_found)
+        if len(scope) == 1:
+            raw_chunks = await retrieve(
+                query_embedding,
+                session_id,
+                top_k=settings.retrieval_top_k,
+                drug_name=scope[0],
+            )
+        else:
+            # Per-drug retrieval: guarantees representation from every scoped drug.
+            raw_chunks = await _retrieve_diverse(query_embedding, session_id, scope)
     else:
         raw_chunks = await retrieve(
             query_embedding, session_id, top_k=settings.retrieval_top_k
@@ -273,12 +368,27 @@ async def answer(
     """Run the full RAG query pipeline for *question* scoped to *session_id*.
 
     Steps:
+    0. Classify the message; non-medical/unsafe routes short-circuit (no
+       retrieval, no source chips) with a canned reply.
     1. Embed the question (enriched with last history turn for follow-ups).
     2. Retrieve top-k chunks from Chroma filtered by session_id.
     3. Build context string from prescription + retrieved leaflet chunks.
     4. Generate answer via LLM (hallucination-guarded, with conversation history).
     5. Return ChatResponse with answer + citation-filtered source list.
     """
+    drugs_found, _ = await get_upload_result(session_id)
+    gate = classify_input(question, drugs_found)
+    _CHAT_ROUTE.labels(route=gate.route.value).inc()
+    if gate.route is not Route.MEDICAL:
+        return ChatResponse(answer=gate.reply, sources=[])
+
+    # Trim history to the reserved budget once, then use the trimmed list
+    # everywhere so _prepare_context's reservation is exact. Sanitize the
+    # question AFTER classification (the classifier saw the raw text) but
+    # BEFORE embed/LLM — defense-in-depth against prompt injection.
+    history = _trim_history_to_budget(history or [], settings.max_history_tokens)
+    question = sanitize_chat_input(question)
+
     prepared = await _prepare_context(session_id, question, history, embed_executor)
     if prepared is None:
         fallback = await _build_fallback_message(session_id)
@@ -312,6 +422,24 @@ async def answer_stream(
     The frontend is responsible for stripping the trailing CITED: line from
     the accumulated text when it receives the sources event.
     """
+    drugs_found, _ = await get_upload_result(session_id)
+    gate = classify_input(question, drugs_found)
+    _CHAT_ROUTE.labels(route=gate.route.value).inc()
+    if gate.route is not Route.MEDICAL:
+        # Same contract as the no-chunks path: text → empty [SOURCES] → [DONE],
+        # so SSE framing and server-side history append are unchanged.
+        yield gate.reply
+        yield "[SOURCES]" + json.dumps({"sources": []})
+        yield "[DONE]"
+        return
+
+    # Trim history to the reserved budget once, then use the trimmed list
+    # everywhere so _prepare_context's reservation is exact. Sanitize the
+    # question AFTER classification (the classifier saw the raw text) but
+    # BEFORE embed/LLM — defense-in-depth against prompt injection.
+    history = _trim_history_to_budget(history or [], settings.max_history_tokens)
+    question = sanitize_chat_input(question)
+
     prepared = await _prepare_context(session_id, question, history, embed_executor)
     if prepared is None:
         fallback = await _build_fallback_message(session_id)
