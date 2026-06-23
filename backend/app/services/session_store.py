@@ -75,6 +75,11 @@ async def set_session_data(session_id: str, field: str, value: Any) -> None:
         key = _key(session_id)
         await r.hset(key, field, json.dumps(value))
         await r.expire(key, settings.session_ttl_seconds)
+        # Keep the sibling history key's TTL in lockstep so the two never drift
+        # out of sync. Only refresh if it already exists — never create a phantom.
+        hist_key = _hist_key(session_id)
+        if await r.exists(hist_key):
+            await r.expire(hist_key, settings.session_ttl_seconds)
     except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as exc:
         raise StorageUnavailableError(str(exc)) from exc
 
@@ -164,6 +169,11 @@ async def append_history(session_id: str, role: str, content: str) -> None:
         await r.rpush(key, entry)
         await r.ltrim(key, -20, -1)
         await r.expire(key, settings.session_ttl_seconds)
+        # Keep the sibling session key's TTL in lockstep so the two never drift
+        # out of sync. Only refresh if it already exists — never create a phantom.
+        session_key = _key(session_id)
+        if await r.exists(session_key):
+            await r.expire(session_key, settings.session_ttl_seconds)
     except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as exc:
         raise StorageUnavailableError(str(exc)) from exc
 
