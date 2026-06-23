@@ -5,6 +5,7 @@ import pytest
 
 from app.models.schemas import InteractionFlag
 from app.services.interaction_detector import (
+    MAX_INTERACTION_DRUGS,
     _extract_excerpt,
     _word_in_text,
     detect_interactions,
@@ -170,6 +171,27 @@ async def test_detect_interactions_no_cross_mention_returns_empty(chroma_client)
     ):
         flags = await detect_interactions(sid, client=chroma_client)
     assert flags == []
+
+
+async def test_detect_interactions_skips_when_too_many_drugs(chroma_client):
+    """Above MAX_INTERACTION_DRUGS the quadratic scan is skipped, returning []."""
+    too_many = [f"drug{i}" for i in range(MAX_INTERACTION_DRUGS + 1)]
+
+    with (
+        patch(
+            "app.services.interaction_detector.get_upload_result",
+            return_value=(too_many, []),
+        ) as mock_upload,
+        patch(
+            "app.services.interaction_detector.get_by_section"
+        ) as mock_get_by_section,
+    ):
+        flags = await detect_interactions("big-session", client=chroma_client)
+
+    assert flags == []
+    # The scan must be short-circuited before any per-drug chunk read.
+    mock_get_by_section.assert_not_called()
+    mock_upload.assert_awaited_once()
 
 
 async def test_detect_interactions_deduplicates_pair(chroma_client):

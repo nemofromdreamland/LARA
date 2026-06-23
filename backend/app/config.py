@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     dailymed_cache_ttl_seconds: int = 86_400
     upload_rate_limit: str = "5/minute"
     chat_rate_limit: str = "20/minute"
+    interactions_rate_limit: str = "10/minute"
     groq_timeout_seconds: float = 30.0
     cerebras_cb_failure_threshold: int = 5
     cerebras_cb_cooldown_seconds: float = 120.0
