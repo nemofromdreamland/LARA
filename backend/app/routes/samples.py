@@ -1,7 +1,7 @@
 import logging
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from app.config import settings
 from app.dependencies import require_api_key, verify_session_owner
@@ -12,7 +12,7 @@ from app.models.schemas import (
     SampleLoadRequest,
     UploadJobResponse,
 )
-from app.services.ingestion import run_ingestion
+from app.services.ingestion_queue import enqueue_ingestion
 from app.services.pdf_parser import PDFExtractionError, extract_text
 from app.services.samples import (
     load_manifest,
@@ -40,7 +40,6 @@ async def load_sample(
     request: Request,
     sample_id: str,
     body: SampleLoadRequest,
-    background_tasks: BackgroundTasks,
     _api_key: str = Depends(require_api_key),
     x_session_token: str | None = Header(default=None, alias="X-Session-Token"),
 ) -> UploadJobResponse:
@@ -67,11 +66,7 @@ async def load_sample(
 
     job_id = str(uuid.uuid4())
     await save_job_status(job_id, body.session_id, "processing")
-
-    embed_executor = getattr(request.app.state, "embed_executor", None)
-    background_tasks.add_task(
-        run_ingestion, job_id, body.session_id, text, rid, embed_executor
-    )
+    await enqueue_ingestion(job_id, body.session_id, text, rid)
 
     logger.info(
         "sample %s accepted, job %s started for session %s",
