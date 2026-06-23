@@ -23,7 +23,6 @@ async def _seed(name: str, failures: int, last_fail: float) -> None:
 async def test_closed_by_default():
     cb = RedisCircuitBreaker("test-default", failure_threshold=3)
     assert await cb.allow_request() is True
-    assert await cb.is_open is False
 
 
 async def test_stays_closed_below_threshold():
@@ -36,7 +35,6 @@ async def test_opens_at_threshold():
     cb = RedisCircuitBreaker("test-open", failure_threshold=2, cooldown_seconds=60)
     await _seed("test-open", failures=2, last_fail=time.time())
     assert await cb.allow_request() is False
-    assert await cb.is_open is True
 
 
 async def test_success_resets_failures():

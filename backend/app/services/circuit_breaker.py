@@ -101,7 +101,3 @@ class RedisCircuitBreaker:
             )
         except Exception:
             pass
-
-    @property
-    async def is_open(self) -> bool:
-        return not await self.allow_request()
