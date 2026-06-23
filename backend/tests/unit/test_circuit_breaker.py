@@ -15,7 +15,7 @@ from app.services.circuit_breaker import RedisCircuitBreaker
 
 
 async def _seed(name: str, failures: int, last_fail: float) -> None:
-    r = _ss._get_redis()
+    r = _ss.get_redis()
     await r.set(f"cb:{name}:failures", failures)
     await r.set(f"cb:{name}:last_fail", str(last_fail))
 
@@ -62,7 +62,7 @@ async def test_half_open_after_cooldown():
 async def test_fails_open_when_redis_unavailable():
     cb = RedisCircuitBreaker("test-noredis", failure_threshold=1)
     old = _ss._redis
-    _ss._redis = None  # _get_redis() now raises RuntimeError
+    _ss._redis = None  # get_redis() now raises RuntimeError
     try:
         assert await cb.allow_request() is True
     finally:
@@ -80,7 +80,7 @@ async def test_record_failure_increments_counter_and_stamps_time():
     await cb.record_failure()
     await cb.record_failure()
 
-    r = _ss._get_redis()
+    r = _ss.get_redis()
     assert int(await r.get("cb:test-lua-incr:failures")) == 2
     last_fail = float(await r.get("cb:test-lua-incr:last_fail"))
     assert before <= last_fail <= time.time()
@@ -90,7 +90,7 @@ async def test_record_failure_sets_ttl_on_both_keys():
     cb = RedisCircuitBreaker("test-lua-ttl", failure_threshold=3, cooldown_seconds=60.0)
     await cb.record_failure()
 
-    r = _ss._get_redis()
+    r = _ss.get_redis()
     # TTL is cooldown_seconds * 10 so stuck state self-heals.
     for key in ("cb:test-lua-ttl:failures", "cb:test-lua-ttl:last_fail"):
         ttl = await r.ttl(key)
@@ -134,6 +134,6 @@ async def test_success_after_failures_closes_and_clears_keys():
     await cb.record_success()
     assert await cb.allow_request() is True
 
-    r = _ss._get_redis()
+    r = _ss.get_redis()
     assert await r.get("cb:test-lua-close:failures") is None
     assert await r.get("cb:test-lua-close:last_fail") is None

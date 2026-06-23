@@ -86,7 +86,7 @@ async def test_delete_session_removes_hash(monkeypatch):
     # Call the raw Redis deletion directly (bypassing ChromaDB side-effect)
     import app.services.session_store as _m
 
-    r = _m._get_redis()
+    r = _m.get_redis()
     await r.delete(_m._key("del_test"))
 
     assert await session_exists("del_test") is False
@@ -96,7 +96,7 @@ def _make_delete_without_chroma(ss_module):
     """Return an async delete_session that skips the ChromaDB call."""
 
     async def _delete(session_id: str) -> None:
-        r = ss_module._get_redis()
+        r = ss_module.get_redis()
         await r.delete(ss_module._key(session_id))
 
     return _delete

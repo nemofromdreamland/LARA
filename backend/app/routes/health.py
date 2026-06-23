@@ -7,7 +7,7 @@ from app.config import settings
 from app.models.schemas import ComponentHealth, HealthResponse
 from app.services import embedder, vector_store
 from app.services.llm_client import _cerebras_breaker, _groq_breaker
-from app.services.session_store import _get_redis
+from app.services.session_store import get_redis
 
 router = APIRouter()
 
@@ -45,7 +45,7 @@ async def health() -> JSONResponse:
         llm_routing = ComponentHealth(status="ok")
 
     try:
-        await _get_redis().ping()
+        await get_redis().ping()
         redis_comp = ComponentHealth(status="ok")
     except Exception as exc:
         redis_comp = ComponentHealth(status="unavailable", detail=str(exc))

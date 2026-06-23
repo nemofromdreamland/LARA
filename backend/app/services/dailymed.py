@@ -17,15 +17,11 @@ DAILYMED_BASE = "https://dailymed.nlm.nih.gov/dailymed/services/v2"
 _CACHE_PREFIX = "dailymed:"
 
 
-def _get_redis():
-    from app.services.session_store import _get_redis as _session_get_redis
-
-    return _session_get_redis()
-
-
 async def _cache_get(drug_name: str) -> list | None:
+    from app.services.session_store import get_redis
+
     try:
-        r = _get_redis()
+        r = get_redis()
         raw = await r.get(f"{_CACHE_PREFIX}{drug_name}")
         if raw is None:
             return None
@@ -36,8 +32,10 @@ async def _cache_get(drug_name: str) -> list | None:
 
 
 async def _cache_set(drug_name: str, sections: list) -> None:
+    from app.services.session_store import get_redis
+
     try:
-        r = _get_redis()
+        r = get_redis()
         payload = json.dumps([asdict(s) for s in sections])
         await r.setex(
             f"{_CACHE_PREFIX}{drug_name}",
@@ -49,8 +47,10 @@ async def _cache_set(drug_name: str, sections: list) -> None:
 
 
 async def clear_dailymed_cache() -> None:
+    from app.services.session_store import get_redis
+
     try:
-        r = _get_redis()
+        r = get_redis()
         keys = await r.keys(f"{_CACHE_PREFIX}*")
         if keys:
             await r.delete(*keys)
