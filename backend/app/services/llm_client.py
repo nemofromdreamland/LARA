@@ -42,15 +42,20 @@ _LLM_CALLS = Counter(
 _CITED_RE = re.compile(r"\nCITED:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
 
 
-def strip_cited_line(text: str) -> tuple[str, list[tuple[str, str]]]:
+def strip_cited_line(text: str) -> tuple[str, list[tuple[str, str]] | None]:
     """Remove the trailing CITED: line from LLM output and parse it.
 
-    Returns (clean_text, [(drug, section), ...]).
-    If no CITED line is present, returns (text, []).
+    Returns (clean_text, cited) where cited distinguishes three cases so callers
+    can tell "the model cited nothing" from "there was no usable footer":
+      - ``None`` — no CITED footer, or a footer with no parseable drug/section
+        pair (format drift). Caller should fall back to showing all sources.
+      - ``[]`` — the footer is exactly ``CITED: none``: the model cited nothing,
+        so zero sources should be shown.
+      - ``[(drug, section), ...]`` — the parsed citations.
     """
     m = _CITED_RE.search(text)
     if not m:
-        return text, []
+        return text, None
 
     cited_raw = m.group(1).strip()
     clean_text = text[: m.start()].rstrip()
@@ -64,7 +69,8 @@ def strip_cited_line(text: str) -> tuple[str, list[tuple[str, str]]]:
         if "/" in entry:
             drug, _, section = entry.partition("/")
             pairs.append((drug.strip().lower(), section.strip().lower()))
-    return clean_text, pairs
+    # Footer present but unparseable (no drug/section) → treat as "no footer".
+    return clean_text, pairs or None
 
 
 SYSTEM_PROMPT = (
