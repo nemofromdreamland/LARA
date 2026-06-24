@@ -3,7 +3,6 @@ import uuid
 
 from fastapi import (
     APIRouter,
-    BackgroundTasks,
     Depends,
     File,
     Form,
@@ -18,7 +17,7 @@ from app.config import settings
 from app.dependencies import require_api_key, verify_session_owner
 from app.limiter import limiter
 from app.models.schemas import JobStatusResponse, UploadJobResponse
-from app.services.ingestion import run_ingestion
+from app.services.ingestion_queue import enqueue_ingestion
 from app.services.pdf_parser import PDFExtractionError, extract_text
 from app.services.session_store import get_job_status, save_job_status
 from app.utils import get_request_id, run_sync
@@ -32,7 +31,6 @@ router = APIRouter()
 @limiter.limit(settings.upload_rate_limit)
 async def upload(
     request: Request,
-    background_tasks: BackgroundTasks,
     session_id: str = Form(...),
     file: UploadFile = File(...),
     _api_key: str = Depends(require_api_key),
@@ -64,11 +62,7 @@ async def upload(
 
     job_id = str(uuid.uuid4())
     await save_job_status(job_id, session_id, "processing")
-
-    embed_executor = getattr(request.app.state, "embed_executor", None)
-    background_tasks.add_task(
-        run_ingestion, job_id, session_id, text, rid, embed_executor
-    )
+    await enqueue_ingestion(job_id, session_id, text, rid)
 
     logger.info(
         "upload accepted, job %s started for session %s",

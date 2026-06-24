@@ -63,11 +63,20 @@ def test_strip_cited_line_none_returns_empty_pairs():
     assert pairs == []
 
 
-def test_strip_cited_line_no_cited_returns_original():
+def test_strip_cited_line_no_cited_returns_none():
+    """No footer → None (caller falls back to all sources), distinct from []."""
     text = "Some answer with no footer."
     clean, pairs = strip_cited_line(text)
     assert clean == text
-    assert pairs == []
+    assert pairs is None
+
+
+def test_strip_cited_line_garbled_footer_returns_none():
+    """A footer with no parseable drug/section pair is treated as 'no footer'."""
+    text = "Some answer.\nCITED: see above"
+    clean, pairs = strip_cited_line(text)
+    assert clean == "Some answer."
+    assert pairs is None
 
 
 def test_strip_cited_line_trailing_blank_lines():

@@ -16,10 +16,10 @@ from app.services.session_store import (
 
 
 async def test_get_redis_raises_when_not_initialised(monkeypatch):
-    """_get_redis() must raise RuntimeError when _redis is None."""
+    """get_redis() must raise RuntimeError when _redis is None."""
     monkeypatch.setattr(ss, "_redis", None)
     with pytest.raises(RuntimeError, match="Redis not initialised"):
-        ss._get_redis()
+        ss.get_redis()
 
 
 async def test_close_redis_is_idempotent(monkeypatch):

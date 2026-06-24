@@ -1,3 +1,4 @@
+import asyncio
 import io
 from unittest.mock import AsyncMock, patch
 
@@ -6,7 +7,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.models.schemas import PrescriptionEntry
+from app.services import ingestion_queue as iq
 from app.services.dailymed import LeafletSection
+
+
+def _drain() -> int:
+    """Run the queue consumer once over the shared fakeredis stream.
+
+    Ingestion is now enqueued (not a BackgroundTask), so the consumer must be
+    driven explicitly for a job to reach a terminal status during a test.
+    """
+    return asyncio.run(iq.read_new(None))
 
 
 def _make_pdf(text: str) -> bytes:
@@ -167,12 +178,20 @@ def _job_status(client, job_id: str, session_id: str) -> dict:
     return resp.json()
 
 
+@patch("app.services.ingestion.delete_session", new_callable=AsyncMock)
 @patch("app.services.ingestion.parse_prescription", new_callable=AsyncMock)
 @patch("app.services.ingestion.fetch_leaflet_sections", new_callable=AsyncMock)
 @patch("app.services.ingestion.embed", new_callable=AsyncMock)
 @patch("app.services.ingestion.store", new_callable=AsyncMock)
 def test_upload_success_job_reaches_done_with_drugs_found(
-    mock_store, mock_embed, mock_fetch, mock_parse, client, session_id, pdf_with_drug
+    mock_store,
+    mock_embed,
+    mock_fetch,
+    mock_parse,
+    mock_delete,
+    client,
+    session_id,
+    pdf_with_drug,
 ):
     mock_parse.return_value = MOCK_ENTRIES
     mock_fetch.return_value = MOCK_SECTIONS
@@ -186,6 +205,7 @@ def test_upload_success_job_reaches_done_with_drugs_found(
     )
     assert response.status_code == 202
 
+    assert _drain() == 1
     data = _job_status(client, response.json()["job_id"], session_id)
     assert data["status"] == "done"
     assert data["drugs_found"] == ["lisinopril"]
@@ -194,12 +214,20 @@ def test_upload_success_job_reaches_done_with_drugs_found(
     mock_store.assert_awaited_once()
 
 
+@patch("app.services.ingestion.delete_session", new_callable=AsyncMock)
 @patch("app.services.ingestion.parse_prescription", new_callable=AsyncMock)
 @patch("app.services.ingestion.process_drug", new_callable=AsyncMock)
 @patch("app.services.ingestion.embed", new_callable=AsyncMock)
 @patch("app.services.ingestion.store", new_callable=AsyncMock)
 def test_upload_per_drug_failure_job_done_with_missing_leaflet(
-    mock_store, mock_embed, mock_process, mock_parse, client, session_id, pdf_with_drug
+    mock_store,
+    mock_embed,
+    mock_process,
+    mock_parse,
+    mock_delete,
+    client,
+    session_id,
+    pdf_with_drug,
 ):
     """One drug's DailyMed fetch blows up: the job still finishes 'done' and
     reports that drug under missing_leaflets while the other is stored."""
@@ -224,6 +252,7 @@ def test_upload_per_drug_failure_job_done_with_missing_leaflet(
     )
     assert response.status_code == 202
 
+    assert _drain() == 1
     data = _job_status(client, response.json()["job_id"], session_id)
     assert data["status"] == "done"
     assert data["drugs_found"] == ["lisinopril"]
@@ -231,10 +260,11 @@ def test_upload_per_drug_failure_job_done_with_missing_leaflet(
     assert data["error"] is None
 
 
+@patch("app.services.ingestion.delete_session", new_callable=AsyncMock)
 @patch("app.services.ingestion.parse_prescription", new_callable=AsyncMock)
 @patch("app.services.ingestion.fetch_leaflet_sections", new_callable=AsyncMock)
 def test_upload_unknown_drug_job_done_with_missing_leaflet(
-    mock_fetch, mock_parse, client, session_id, pdf_with_drug
+    mock_fetch, mock_parse, mock_delete, client, session_id, pdf_with_drug
 ):
     """No leaflet found (empty fetch, no exception) also ends in 'done' with
     the drug listed under missing_leaflets."""
@@ -248,17 +278,19 @@ def test_upload_unknown_drug_job_done_with_missing_leaflet(
     )
     assert response.status_code == 202
 
+    assert _drain() == 1
     data = _job_status(client, response.json()["job_id"], session_id)
     assert data["status"] == "done"
     assert data["drugs_found"] == []
     assert data["missing_leaflets"] == ["lisinopril"]
 
 
+@patch("app.services.ingestion.delete_session", new_callable=AsyncMock)
 @patch("app.services.ingestion.parse_prescription", new_callable=AsyncMock)
 @patch("app.services.ingestion.fetch_leaflet_sections", new_callable=AsyncMock)
 @patch("app.services.ingestion.embed", new_callable=AsyncMock)
 def test_upload_embed_failure_drug_lands_in_missing_leaflets(
-    mock_embed, mock_fetch, mock_parse, client, session_id, pdf_with_drug
+    mock_embed, mock_fetch, mock_parse, mock_delete, client, session_id, pdf_with_drug
 ):
     """An embed failure for a drug is isolated: the job ends 'done' with that
     drug in missing_leaflets rather than crashing the entire ingestion job."""
@@ -273,6 +305,7 @@ def test_upload_embed_failure_drug_lands_in_missing_leaflets(
     )
     assert response.status_code == 202
 
+    assert _drain() == 1
     data = _job_status(client, response.json()["job_id"], session_id)
     assert data["status"] == "done"
     assert data["drugs_found"] == []
@@ -292,6 +325,7 @@ def test_upload_no_drugs_job_fails_with_message(
     )
     assert response.status_code == 202
 
+    assert _drain() == 1
     data = _job_status(client, response.json()["job_id"], session_id)
     assert data["status"] == "failed"
     assert "No drug names found" in data["error"]

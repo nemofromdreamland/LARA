@@ -1,13 +1,13 @@
 import json
 import logging
 import re
-import unicodedata
 
 import groq as groq_sdk
 from prometheus_client import Counter
 
 import app.services.llm_client as llm_client
 from app.models.schemas import PrescriptionEntry
+from app.security import _INJECTION_PATTERNS, _MAX_TEXT_LENGTH, _ascii_fold
 from app.services.drug_extractor import extract_prescription_entries
 
 _EXTRACTION_TIER = Counter(
@@ -42,46 +42,10 @@ EXTRACTION_SYSTEM_PROMPT = (
 # Matches optional ```json ... ``` or ``` ... ``` fences that some LLMs add.
 _FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.MULTILINE)
 
-_MAX_TEXT_LENGTH = 8000
-
-# Denylist: patterns that indicate prompt-injection attempts.
-# Matched against an ASCII-normalised copy of each line so Unicode lookalikes
-# (e.g. Cyrillic 'а' ≈ Latin 'a') don't bypass the check.
-# "ignore" is narrowed to require an injection keyword so that legitimate
-# clinical instructions ("do not ignore blurred vision") are not flagged.
-_INJECTION_PATTERNS = re.compile(
-    r"\bignore\s+(?:previous|prior|above|all|the\s+above|instructions?|prompts?)\b"
-    r"|\bforget\s+(?:previous|prior|above|all|instructions?|everything)\b"
-    r"|\bdisregard\s+(?:previous|prior|above|all|instructions?)\b"
-    r"|\boverride\s+(?:previous|prior|above|all|instructions?|settings?)\b"
-    r"|\bbypass\s+(?:previous|prior|above|all|instructions?|filters?|restrictions?)\b"
-    r"|system\s*:"
-    r"|assistant\s*:"
-    r"|human\s*:"
-    r"|user\s*:"
-    r"|\bprompt\s*:"
-    r"|\bnew\s+instruction"
-    r"|\bact\s+as\b"
-    r"|\bpretend\s+(?:to\s+be|you\s+are)\b"
-    r"|\bdo\s+not\s+follow\b"
-    r"|\bdo\s+not\s+obey\b"
-    r"|<\|"
-    r"|</?(?:s|system|user|assistant|inst|instruction)>"
-    r"|^\[/?INST\]"
-    r"|\{\{.*?\}\}"
-    r"|%7[Bb]%7[Bb]",  # URL-encoded {{ }}
-    re.IGNORECASE | re.MULTILINE,
-)
-
 # Allowlist: valid drug names are letters, digits, spaces, hyphens, parentheses,
 # forward slashes, and periods — at most 80 characters.
 _DRUG_NAME_RE = re.compile(r"^[A-Za-z0-9 \-\(\)/\.]+$")
 _DRUG_NAME_MAX_LEN = 80
-
-
-def _ascii_fold(text: str) -> str:
-    """NFKD-normalise + strip non-ASCII so Unicode lookalikes match ASCII patterns."""
-    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
 
 
 def _is_valid_drug_name(name: str) -> bool:

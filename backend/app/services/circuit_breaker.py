@@ -45,15 +45,15 @@ class RedisCircuitBreaker:
         self._key_failures = f"cb:{name}:failures"
         self._key_last_fail = f"cb:{name}:last_fail"
 
-    def _get_redis(self):
-        from app.services.session_store import _get_redis as _session_get_redis
+    def _redis_client(self):
+        from app.services.session_store import get_redis
 
-        return _session_get_redis()
+        return get_redis()
 
     async def allow_request(self) -> bool:
         """Return True if the circuit should let a request through."""
         try:
-            r = self._get_redis()
+            r = self._redis_client()
             failures_raw = await r.get(self._key_failures)
             failures = int(failures_raw) if failures_raw else 0
             if failures < self._threshold:
@@ -73,7 +73,7 @@ class RedisCircuitBreaker:
 
     async def record_success(self) -> None:
         try:
-            r = self._get_redis()
+            r = self._redis_client()
             failures_raw = await r.get(self._key_failures)
             if failures_raw and int(failures_raw) > 0:
                 logger.info("Redis circuit breaker reset to CLOSED for %s", self._name)
@@ -83,7 +83,7 @@ class RedisCircuitBreaker:
 
     async def record_failure(self) -> None:
         try:
-            r = self._get_redis()
+            r = self._redis_client()
             ttl = int(self._cooldown * 10)
             failures = await r.eval(
                 _RECORD_FAILURE_LUA,
@@ -101,7 +101,3 @@ class RedisCircuitBreaker:
             )
         except Exception:
             pass
-
-    @property
-    async def is_open(self) -> bool:
-        return not await self.allow_request()

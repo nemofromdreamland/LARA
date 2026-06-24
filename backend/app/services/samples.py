@@ -11,7 +11,8 @@ from functools import lru_cache
 from pathlib import Path
 
 from app.config import settings
-from app.services.dailymed import _CACHE_PREFIX, _get_redis, _normalize_drug_name
+from app.services.dailymed import _CACHE_PREFIX, _normalize_drug_name
+from app.services.session_store import get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,7 @@ async def seed_sample_leaflet_cache(drugs: list[str] | None = None) -> int:
         try:
             payload = path.read_text(encoding="utf-8")
             json.loads(payload)  # refuse to seed corrupt fixtures
-            r = _get_redis()
+            r = get_redis()
             await r.setex(
                 f"{_CACHE_PREFIX}{path.stem}",
                 settings.dailymed_cache_ttl_seconds,

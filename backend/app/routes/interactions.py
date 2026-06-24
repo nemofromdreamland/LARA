@@ -1,8 +1,10 @@
 import math
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Request
 
+from app.config import settings
 from app.dependencies import require_api_key, verify_session_owner
+from app.limiter import limiter
 from app.models.schemas import (
     InteractionFlag,
     InteractionsRequest,
@@ -15,7 +17,9 @@ router = APIRouter()
 
 
 @router.post("/interactions", response_model=InteractionsResponse)
+@limiter.limit(settings.interactions_rate_limit)
 async def interactions(
+    request: Request,
     body: InteractionsRequest,
     _api_key: str = Depends(require_api_key),
     x_session_token: str | None = Header(default=None, alias="X-Session-Token"),

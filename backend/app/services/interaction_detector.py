@@ -12,15 +12,23 @@ Known limitations:
   evidence of safety. Consumers of /interactions must present it that way.
 """
 
+import logging
 import re
 
 from app.models.schemas import InteractionFlag
 from app.services.session_store import get_upload_result
 from app.services.vector_store import get_by_section
 
+logger = logging.getLogger(__name__)
+
 # Excerpt window: characters captured before and after the match point.
 _EXCERPT_BEFORE = 100
 _EXCERPT_AFTER = 200
+
+# Upper bound on drugs scanned. The scan is O(drugs² × chunks) with a Redis
+# read per drug, so cap it to keep the endpoint from doing unbounded work for
+# pathological sessions; above this we return no flags rather than scanning.
+MAX_INTERACTION_DRUGS = 25
 
 
 def _extract_excerpt(text: str, term: str) -> str:
@@ -72,6 +80,14 @@ async def detect_interactions(
     drugs_found, _ = await get_upload_result(session_id)
 
     if len(drugs_found) < 2:
+        return []
+
+    if len(drugs_found) > MAX_INTERACTION_DRUGS:
+        logger.warning(
+            "interaction scan skipped: %d drugs exceeds MAX_INTERACTION_DRUGS=%d",
+            len(drugs_found),
+            MAX_INTERACTION_DRUGS,
+        )
         return []
 
     # pair key → best excerpt length seen so far (for deduplication)

@@ -8,9 +8,13 @@ import asyncio
 
 from app.models.schemas import PrescriptionEntry
 from app.services.session_store import (
+    _hist_key,
+    _key,
+    append_history,
     create_session,
     get_prescription,
     get_prescription_entries,
+    get_redis,
     get_session_data,
     get_upload_result,
     save_prescription,
@@ -86,7 +90,7 @@ async def test_delete_session_removes_hash(monkeypatch):
     # Call the raw Redis deletion directly (bypassing ChromaDB side-effect)
     import app.services.session_store as _m
 
-    r = _m._get_redis()
+    r = _m.get_redis()
     await r.delete(_m._key("del_test"))
 
     assert await session_exists("del_test") is False
@@ -96,7 +100,7 @@ def _make_delete_without_chroma(ss_module):
     """Return an async delete_session that skips the ChromaDB call."""
 
     async def _delete(session_id: str) -> None:
-        r = ss_module._get_redis()
+        r = ss_module.get_redis()
         await r.delete(ss_module._key(session_id))
 
     return _delete
@@ -143,3 +147,57 @@ async def test_save_and_get_prescription_entries():
 
 async def test_get_prescription_entries_returns_empty_for_missing_session():
     assert await get_prescription_entries("nonexistent") == []
+
+
+# ── Sibling TTL refresh (no drift) ────────────────────────────────────────────
+
+
+async def test_append_history_refreshes_session_ttl():
+    """append_history must keep the sibling session key's TTL in lockstep."""
+    sid = "ttl-hist"
+    await create_session(sid)  # creates session:{sid} with full TTL
+    await append_history(sid, "user", "seed")  # creates history:{sid}
+
+    r = get_redis()
+    # Simulate drift: shorten only the session key.
+    await r.expire(_key(sid), 30)
+    assert await r.ttl(_key(sid)) <= 30
+
+    await append_history(sid, "assistant", "reply")
+
+    # Both keys are now back to the full session TTL.
+    assert await r.ttl(_key(sid)) > 1000
+    assert await r.ttl(_hist_key(sid)) > 1000
+
+
+async def test_set_session_data_refreshes_history_ttl():
+    """set_session_data must keep the sibling history key's TTL in lockstep."""
+    sid = "ttl-sess"
+    await append_history(sid, "user", "seed")  # creates history:{sid} only
+
+    r = get_redis()
+    # Simulate drift: shorten only the history key.
+    await r.expire(_hist_key(sid), 30)
+    assert await r.ttl(_hist_key(sid)) <= 30
+
+    await set_session_data(sid, "field", "value")
+
+    # Both keys are now back to the full session TTL.
+    assert await r.ttl(_hist_key(sid)) > 1000
+    assert await r.ttl(_key(sid)) > 1000
+
+
+async def test_set_session_data_does_not_create_phantom_history():
+    """No history key should be created when none exists yet."""
+    sid = "no-phantom-hist"
+    await set_session_data(sid, "field", "value")
+    r = get_redis()
+    assert await r.exists(_hist_key(sid)) == 0
+
+
+async def test_append_history_does_not_create_phantom_session():
+    """No session key should be created when none exists yet."""
+    sid = "no-phantom-sess"
+    await append_history(sid, "user", "hi")
+    r = get_redis()
+    assert await r.exists(_key(sid)) == 0

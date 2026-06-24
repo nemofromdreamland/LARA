@@ -18,7 +18,7 @@ def _key(session_id: str) -> str:
     return f"session:{session_id}"
 
 
-def _get_redis() -> aioredis.Redis:
+def get_redis() -> aioredis.Redis:
     if _redis is None:
         raise RuntimeError("Redis not initialised — call init_redis() first")
     return _redis
@@ -59,7 +59,7 @@ async def create_session(session_id: str) -> None:
     from app.config import settings
 
     try:
-        r = _get_redis()
+        r = get_redis()
         key = _key(session_id)
         await r.hset(key, "created_at", json.dumps(time.time()))
         await r.expire(key, settings.session_ttl_seconds)
@@ -71,17 +71,22 @@ async def set_session_data(session_id: str, field: str, value: Any) -> None:
     from app.config import settings
 
     try:
-        r = _get_redis()
+        r = get_redis()
         key = _key(session_id)
         await r.hset(key, field, json.dumps(value))
         await r.expire(key, settings.session_ttl_seconds)
+        # Keep the sibling history key's TTL in lockstep so the two never drift
+        # out of sync. Only refresh if it already exists — never create a phantom.
+        hist_key = _hist_key(session_id)
+        if await r.exists(hist_key):
+            await r.expire(hist_key, settings.session_ttl_seconds)
     except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as exc:
         raise StorageUnavailableError(str(exc)) from exc
 
 
 async def get_session_data(session_id: str, field: str) -> Any | None:
     try:
-        r = _get_redis()
+        r = get_redis()
         raw = await r.hget(_key(session_id), field)
         if raw is None:
             return None
@@ -92,7 +97,7 @@ async def get_session_data(session_id: str, field: str) -> Any | None:
 
 async def session_exists(session_id: str) -> bool:
     try:
-        r = _get_redis()
+        r = get_redis()
         return bool(await r.exists(_key(session_id)))
     except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as exc:
         raise StorageUnavailableError(str(exc)) from exc
@@ -101,7 +106,7 @@ async def session_exists(session_id: str) -> bool:
 async def delete_session(session_id: str) -> None:
     from app.services.vector_store import delete_session as vs_delete
 
-    r = _get_redis()
+    r = get_redis()
     await r.delete(_key(session_id))
     await vs_delete(session_id)
 
@@ -158,19 +163,24 @@ async def append_history(session_id: str, role: str, content: str) -> None:
     from app.config import settings
 
     try:
-        r = _get_redis()
+        r = get_redis()
         key = _hist_key(session_id)
         entry = json.dumps({"role": role, "content": content, "ts": time.time()})
         await r.rpush(key, entry)
         await r.ltrim(key, -20, -1)
         await r.expire(key, settings.session_ttl_seconds)
+        # Keep the sibling session key's TTL in lockstep so the two never drift
+        # out of sync. Only refresh if it already exists — never create a phantom.
+        session_key = _key(session_id)
+        if await r.exists(session_key):
+            await r.expire(session_key, settings.session_ttl_seconds)
     except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as exc:
         raise StorageUnavailableError(str(exc)) from exc
 
 
 async def get_history(session_id: str, max_turns: int = 10) -> list[ChatTurn]:
     try:
-        r = _get_redis()
+        r = get_redis()
         raw = await r.lrange(_hist_key(session_id), -max_turns, -1)
     except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as exc:
         raise StorageUnavailableError(str(exc)) from exc
@@ -198,7 +208,7 @@ async def save_job_status(
     error: str | None = None,
 ) -> None:
     try:
-        r = _get_redis()
+        r = get_redis()
         key = _job_key(job_id)
         payload: dict[str, str] = {
             "session_id": json.dumps(session_id),
@@ -215,7 +225,7 @@ async def save_job_status(
 
 async def get_job_status(job_id: str) -> dict | None:
     try:
-        r = _get_redis()
+        r = get_redis()
         key = _job_key(job_id)
         raw = await r.hgetall(key)
         if not raw:

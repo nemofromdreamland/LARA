@@ -16,16 +16,32 @@ DAILYMED_BASE = "https://dailymed.nlm.nih.gov/dailymed/services/v2"
 
 _CACHE_PREFIX = "dailymed:"
 
+# Singleton httpx client — reuses the underlying connection pool across calls,
+# avoiding a fresh TCP+TLS handshake on every DailyMed request. Mirrors the
+# Cerebras client pattern in llm_client.py. When None (e.g. in tests that don't
+# run the app lifespan) callers fall back to a temporary per-call client.
+_dailymed_client: httpx.AsyncClient | None = None
 
-def _get_redis():
-    from app.services.session_store import _get_redis as _session_get_redis
 
-    return _session_get_redis()
+async def init_dailymed_client() -> None:
+    """Create the shared DailyMed httpx client. Call from app lifespan startup."""
+    global _dailymed_client
+    _dailymed_client = httpx.AsyncClient(timeout=15.0)
+
+
+async def close_dailymed_client() -> None:
+    """Close the shared DailyMed httpx client. Call from app lifespan teardown."""
+    global _dailymed_client
+    if _dailymed_client is not None:
+        await _dailymed_client.aclose()
+        _dailymed_client = None
 
 
 async def _cache_get(drug_name: str) -> list | None:
+    from app.services.session_store import get_redis
+
     try:
-        r = _get_redis()
+        r = get_redis()
         raw = await r.get(f"{_CACHE_PREFIX}{drug_name}")
         if raw is None:
             return None
@@ -36,8 +52,10 @@ async def _cache_get(drug_name: str) -> list | None:
 
 
 async def _cache_set(drug_name: str, sections: list) -> None:
+    from app.services.session_store import get_redis
+
     try:
-        r = _get_redis()
+        r = get_redis()
         payload = json.dumps([asdict(s) for s in sections])
         await r.setex(
             f"{_CACHE_PREFIX}{drug_name}",
@@ -49,8 +67,10 @@ async def _cache_set(drug_name: str, sections: list) -> None:
 
 
 async def clear_dailymed_cache() -> None:
+    from app.services.session_store import get_redis
+
     try:
-        r = _get_redis()
+        r = get_redis()
         keys = await r.keys(f"{_CACHE_PREFIX}*")
         if keys:
             await r.delete(*keys)
@@ -235,6 +255,32 @@ def _parse_sections(raw: list[dict], drug_name: str) -> list[LeafletSection]:
     return results
 
 
+async def _resolve_and_fetch(
+    client: httpx.AsyncClient, drug_name: str, normalized_name: str
+) -> list[LeafletSection]:
+    """Resolve the SPL set-id for *drug_name* and fetch its leaflet sections.
+
+    Tries the original name first, then the normalized form if the original
+    returns no results. Uses *client* for every request so the caller controls
+    whether it's the pooled singleton or a temporary per-call client.
+    """
+    set_id = await _fetch_set_id(drug_name, client)
+
+    if set_id is None and normalized_name and normalized_name != drug_name.lower():
+        logger.info(
+            "DailyMed: retrying %r with normalized name %r",
+            drug_name,
+            normalized_name,
+            extra={"request_id": get_request_id()},
+        )
+        set_id = await _fetch_set_id(normalized_name, client)
+
+    if set_id is None:
+        return []
+    raw = await _fetch_sections_raw(set_id, client)
+    return _parse_sections(raw, drug_name)
+
+
 async def fetch_leaflet_sections(drug_name: str) -> list[LeafletSection]:
     """Fetch and parse official leaflet sections for *drug_name* from DailyMed.
 
@@ -244,6 +290,9 @@ async def fetch_leaflet_sections(drug_name: str) -> list[LeafletSection]:
     Results are cached in Redis by normalized drug name for
     settings.dailymed_cache_ttl_seconds (default 24 h) to avoid redundant
     API calls when the same drug appears across multiple uploads or workers.
+
+    Uses the pooled `_dailymed_client` when the app lifespan has initialised it;
+    otherwise falls back to a temporary per-call client.
 
     Returns an empty list (with a warning) if the drug is not found.
     Raises httpx.HTTPError after 3 retries if the API is unavailable.
@@ -255,25 +304,13 @@ async def fetch_leaflet_sections(drug_name: str) -> list[LeafletSection]:
         logger.debug("DailyMed cache hit: %s", drug_name)
         return _sections_from_cache(cached)
 
-    rid = get_request_id()
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        set_id = await _fetch_set_id(drug_name, client)
-
-        if set_id is None:
-            if normalized_name and normalized_name != drug_name.lower():
-                logger.info(
-                    "DailyMed: retrying %r with normalized name %r",
-                    drug_name,
-                    normalized_name,
-                    extra={"request_id": rid},
-                )
-                set_id = await _fetch_set_id(normalized_name, client)
-
-        if set_id is None:
-            sections: list[LeafletSection] = []
-        else:
-            raw = await _fetch_sections_raw(set_id, client)
-            sections = _parse_sections(raw, drug_name)
+    if _dailymed_client is not None:
+        sections = await _resolve_and_fetch(
+            _dailymed_client, drug_name, normalized_name
+        )
+    else:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            sections = await _resolve_and_fetch(client, drug_name, normalized_name)
 
     await _cache_set(normalized_name, sections)
     return sections

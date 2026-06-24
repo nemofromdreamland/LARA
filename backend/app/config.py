@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     dailymed_cache_ttl_seconds: int = 86_400
     upload_rate_limit: str = "5/minute"
     chat_rate_limit: str = "20/minute"
+    interactions_rate_limit: str = "10/minute"
     groq_timeout_seconds: float = 30.0
     cerebras_cb_failure_threshold: int = 5
     cerebras_cb_cooldown_seconds: float = 120.0
@@ -35,6 +36,13 @@ class Settings(BaseSettings):
     embed_pool_workers: int = Field(default=4, ge=1)
     cleanup_interval_seconds: int = Field(default=1800, ge=60)
     reranker_enabled: bool = True
+    # Durable-ingestion queue (Redis Streams). See app/services/ingestion_queue.py.
+    ingestion_stream_maxlen: int = Field(default=10_000, ge=100)
+    ingestion_max_attempts: int = Field(default=5, ge=1)
+    ingestion_reclaim_idle_seconds: int = Field(default=60, ge=5)
+    # XREADGROUP BLOCK timeout. Kept < gunicorn graceful-timeout (30 s) so a
+    # consumer wakes from a blocked read promptly on shutdown.
+    ingestion_block_ms: int = Field(default=5_000, ge=100)
 
     @model_validator(mode="after")
     def _check_api_key(self) -> "Settings":

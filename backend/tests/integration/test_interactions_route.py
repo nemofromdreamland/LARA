@@ -67,3 +67,23 @@ def test_interactions_single_drug_zero_pairs(
 def test_interactions_missing_session_id_returns_422(client):
     resp = client.post("/interactions", json={})
     assert resp.status_code == 422
+
+
+@patch("app.routes.interactions.get_upload_result")
+@patch("app.routes.interactions.detect_interactions", new_callable=AsyncMock)
+def test_interactions_blocks_eleventh_request(
+    mock_detect, mock_upload, client, session_id
+):
+    """The interactions_rate_limit ('10/minute') allows 10 calls, blocks the 11th."""
+    mock_upload.return_value = (["warfarin", "aspirin"], [])
+    mock_detect.return_value = []
+
+    for i in range(10):
+        res = client.post("/interactions", json={"session_id": session_id})
+        assert res.status_code == 200, (
+            f"Request {i + 1} unexpectedly blocked: {res.text}"
+        )
+
+    res = client.post("/interactions", json={"session_id": session_id})
+    assert res.status_code == 429
+    assert "detail" in res.json()
